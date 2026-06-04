@@ -1,15 +1,11 @@
-﻿"""
+"""
 pages/9_Ask_AI.py
 ==================
-RAG-powered Q&A about the Human Airways Digital Twin project.
+Fully offline RAG Q&A — works without any API keys.
 
-Retrieval: TF-IDF cosine similarity over the built-in knowledge base.
-Generation: Claude claude-haiku via Anthropic API (optional).
-           Without an API key the page shows retrieved context only.
-
-To enable full AI answers:
-  - Set ANTHROPIC_API_KEY environment variable, or
-  - Add it to .streamlit/secrets.toml:  ANTHROPIC_API_KEY = "sk-ant-..."
+Retrieval: TF-IDF (always) or sentence-transformers (if installed, better quality).
+Answer:    Local extractive composition from 29 knowledge base documents.
+Upgrade:   If ANTHROPIC_API_KEY is set, Claude claude-haiku generates a polished answer.
 """
 
 import sys
@@ -19,127 +15,111 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from core.rag import get_knowledge_base, generate_answer, _get_api_key
+from core.rag import (
+    get_knowledge_base, compose_local_answer,
+    generate_answer, _get_api_key, _HAS_SEMANTIC,
+)
 
 st.set_page_config(page_title="Ask AI", page_icon="🤖", layout="wide")
 
 st.title("🤖 Ask AI — Human Airways Digital Twin Q&A")
-st.caption(
-    "Ask anything about the project: methodology, parameters, results, or how to use the app. "
-    "Powered by TF-IDF retrieval + Claude claude-haiku."
-)
+st.caption("Ask anything about the project. Works fully offline — no API key needed.")
 
-# ── API key status ────────────────────────────────────────────────────────────
-has_key = bool(_get_api_key())
-
-if has_key:
-    st.success("Claude API connected — full AI answers enabled.", icon="🟢")
+# ── Status banner ─────────────────────────────────────────────────────────────
+if _get_api_key():
+    st.success("Claude API connected — AI-generated answers enabled.", icon="🟢")
+elif _HAS_SEMANTIC:
+    st.info("Offline mode — semantic search (sentence-transformers) + local answers.", icon="🔵")
 else:
-    st.warning(
-        "No `ANTHROPIC_API_KEY` found. "
-        "The page will show relevant documentation excerpts without AI generation.  \n"
-        "Add your key to `.streamlit/secrets.toml` or set the environment variable "
-        "to unlock full AI answers.",
-        icon="⚠️",
-    )
+    st.info("Offline mode — TF-IDF search + local answers. All 29 KB docs indexed.", icon="📚")
 
-st.divider()
-
-# ── Initialise session state ──────────────────────────────────────────────────
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
-
+# ── Load KB ───────────────────────────────────────────────────────────────────
 if "kb" not in st.session_state:
     with st.spinner("Loading knowledge base…"):
         st.session_state.kb = get_knowledge_base()
-
 kb = st.session_state.kb
 
-# ── Sidebar: example questions ────────────────────────────────────────────────
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+
+# ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.header("Example Questions")
+    st.header("Try these questions")
     examples = [
         "What is POD and how is it used here?",
-        "How many DOE snapshots are in the dataset?",
-        "What does the glottis area parameter affect?",
+        "Why does pressure need only 3 modes?",
+        "Which parameter affects pressure the most?",
         "How accurate is the RBF surrogate?",
-        "What is Latin Hypercube Sampling?",
-        "How do I run the precomputation script?",
-        "What anatomical regions are modelled?",
-        "Which parameter has the most effect on pressure?",
-        "How fast is the RBF inference?",
+        "What is airway resistance and why does it matter?",
+        "How do Sobol indices differ from Pearson correlation?",
+        "How many nodes are in the mesh?",
+        "What does the design landscape show?",
+        "How do I open VTK files in ParaView?",
+        "How do I run the PyQt desktop app?",
+        "What is K-fold cross-validation?",
         "How do I deploy the app online for free?",
+        "What is a Digital Twin?",
+        "How to use the Geometry Explorer colour modes?",
+        "What does precompute.py do?",
     ]
     for ex in examples:
-        if st.button(ex, key=f"ex_{ex[:20]}", width='stretch'):
-            st.session_state["prefill_question"] = ex
+        if st.button(ex, key=f"ex_{ex[:25]}", use_container_width=True):
+            st.session_state["prefill"] = ex
 
     st.divider()
-    if st.button("Clear chat history", width='stretch'):
+    st.markdown(f"**Knowledge base: {len(kb._docs)} documents**")
+    with st.expander("View all topics"):
+        for doc in kb._docs:
+            st.caption(f"• {doc['title']}")
+
+    st.divider()
+    if st.button("Clear chat", use_container_width=True):
         st.session_state.chat_history = []
         st.rerun()
 
-    st.markdown("**Knowledge base**")
-    st.caption(f"{len(kb._docs)} documents indexed")
-    for doc in kb._docs:
-        st.caption(f"• {doc['title']}")
-
-# ── Chat display ──────────────────────────────────────────────────────────────
+# ── Chat history ──────────────────────────────────────────────────────────────
 for msg in st.session_state.chat_history:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
-        if msg["role"] == "assistant" and msg.get("context"):
-            with st.expander("📄 Retrieved context", expanded=False):
-                for score, doc in msg["context"]:
-                    st.markdown(f"**{doc['title']}** (relevance: {score:.2f})")
-                    st.caption(doc["content"][:400] + "…")
+        if msg["role"] == "assistant" and msg.get("sources"):
+            with st.expander("📄 Sources", expanded=False):
+                for score, doc in msg["sources"]:
+                    st.markdown(f"**{doc['title']}** — relevance: {score:.3f}")
 
 # ── Input ─────────────────────────────────────────────────────────────────────
-prefill = st.session_state.pop("prefill_question", "")
-question = st.chat_input("Ask a question about the project…") or prefill
+prefill   = st.session_state.pop("prefill", "")
+question  = st.chat_input("Ask anything about the project…") or prefill
 
 if question:
-    # Show user message
     with st.chat_message("user"):
         st.markdown(question)
     st.session_state.chat_history.append({"role": "user", "content": question})
 
     # Retrieve
-    with st.spinner("Searching knowledge base…"):
-        results = kb.retrieve(question, top_k=3)
+    results = kb.retrieve(question, top_k=3)
 
-    context_chunks = [f"### {doc['title']}\n{doc['content']}" for _, doc in results]
+    # Generate answer
+    has_key = bool(_get_api_key())
+    if has_key:
+        context_chunks = [
+            f"### {doc['title']}\n{doc['content']}" for _, doc in results
+        ]
+        with st.spinner("Generating answer…"):
+            answer = generate_answer(question, context_chunks)
+        if not answer:
+            answer = compose_local_answer(question, results, kb)
+    else:
+        answer = compose_local_answer(question, results, kb)
 
-    # Generate or show context
     with st.chat_message("assistant"):
-        if has_key:
-            with st.spinner("Generating answer…"):
-                answer = generate_answer(question, context_chunks)
-            if answer:
-                st.markdown(answer)
-            else:
-                st.warning("Generation failed. Showing retrieved context below.")
-                for score, doc in results:
-                    st.markdown(f"**{doc['title']}** (relevance: {score:.2f})")
-                    st.markdown(doc["content"])
-                answer = "\n\n".join(f"**{d['title']}**\n{d['content']}" for _, d in results)
-        else:
-            # No API key: show top retrieved document as the answer
-            top_doc = results[0][1]
-            answer = (
-                f"**{top_doc['title']}**\n\n"
-                + top_doc["content"].strip()
-                + "\n\n---\n*Enable AI answers by setting your `ANTHROPIC_API_KEY`.*"
-            )
-            st.markdown(answer)
-
-        with st.expander("📄 Retrieved context", expanded=False):
+        st.markdown(answer)
+        with st.expander("📄 Sources", expanded=False):
             for score, doc in results:
-                st.markdown(f"**{doc['title']}** (relevance: {score:.2f})")
-                st.caption(doc["content"][:400] + "…")
+                st.markdown(f"**{doc['title']}** — relevance: {score:.3f}")
+                st.caption(doc["content"][:300] + "…")
 
     st.session_state.chat_history.append({
-        "role": "assistant",
+        "role":    "assistant",
         "content": answer,
-        "context": results,
+        "sources": results,
     })
