@@ -1,4 +1,4 @@
-"""
+﻿"""
 pages/9_Ask_AI.py
 ==================
 RAG-powered Q&A about the Human Airways Digital Twin project.
@@ -71,11 +71,11 @@ with st.sidebar:
         "How do I deploy the app online for free?",
     ]
     for ex in examples:
-        if st.button(ex, key=f"ex_{ex[:20]}", use_container_width=True):
+        if st.button(ex, key=f"ex_{ex[:20]}", width='stretch'):
             st.session_state["prefill_question"] = ex
 
     st.divider()
-    if st.button("Clear chat history", use_container_width=True):
+    if st.button("Clear chat history", width='stretch'):
         st.session_state.chat_history = []
         st.rerun()
 

@@ -1,4 +1,4 @@
-"""
+﻿"""
 pages/4_POD_Analysis.py
 ========================
 POD (Proper Orthogonal Decomposition) analysis for both geometry and pressure.
@@ -119,7 +119,7 @@ with tab_e:
         legend=dict(x=0.6, y=0.1),
         height=450,
     )
-    st.plotly_chart(fig_e, use_container_width=True)
+    st.plotly_chart(fig_e, width='stretch')
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Geo: modes for 95 %",  modes_for_energy(sv_geo,  0.95))
@@ -139,7 +139,7 @@ with tab_e:
                     title="Singular values (log scale)",
                     color_discrete_map={"Geometry": "#4EB3D3", "Pressure": "#F4A261"})
     fig_sv.update_layout(height=350)
-    st.plotly_chart(fig_sv, use_container_width=True)
+    st.plotly_chart(fig_sv, width='stretch')
 
 # ─ Tab 2: Mode shapes ──────────────────────────────────────────────────────────
 with tab_m:
@@ -200,7 +200,7 @@ with tab_m:
         margin=dict(l=0, r=0, b=0, t=40),
         title=f"Mode {mode_idx} — {mode_pct:.1f} % individual energy",
     )
-    st.plotly_chart(fig_m, use_container_width=True)
+    st.plotly_chart(fig_m, width='stretch')
 
 # ─ Tab 3: Reconstruction ───────────────────────────────────────────────────────
 with tab_r:
@@ -237,9 +237,9 @@ with tab_r:
         )
         return fig
 
-    c1.plotly_chart(pressure_scatter(ref_coords, actual_pres, "Original"), use_container_width=True)
+    c1.plotly_chart(pressure_scatter(ref_coords, actual_pres, "Original"), width='stretch')
     c2.plotly_chart(pressure_scatter(ref_coords, rec_pres,    f"Reconstructed ({k_modes} modes)"),
-                    use_container_width=True)
+                    width='stretch')
 
     # Error map
     err_field = np.abs(actual_pres - rec_pres)
@@ -259,7 +259,7 @@ with tab_r:
         height=500, margin=dict(l=0, r=0, b=0, t=40),
         title="Absolute point-wise reconstruction error",
     )
-    st.plotly_chart(fig_err, use_container_width=True)
+    st.plotly_chart(fig_err, width='stretch')
 
 # ─ Tab 4: Validation ───────────────────────────────────────────────────────────
 with tab_v:
@@ -288,7 +288,7 @@ with tab_v:
         markers=True,
     )
     fig_val.update_layout(height=400)
-    st.plotly_chart(fig_val, use_container_width=True)
+    st.plotly_chart(fig_val, width='stretch')
 
     # Best k modes to achieve < 1% and < 5% error
     errs_arr = np.array(errs)

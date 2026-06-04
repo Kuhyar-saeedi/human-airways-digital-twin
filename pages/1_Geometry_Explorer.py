@@ -1,4 +1,4 @@
-"""
+﻿"""
 pages/1_Geometry_Explorer.py
 ============================
 POD-based interactive shape viewer with real-time slider response.
@@ -77,12 +77,12 @@ def geometry_viewer(n_sliders, mean_geo, modes_geo, scores_geo, svals_geo, std_d
         st.markdown("**Controls**")
 
         b1, b2 = st.columns(2)
-        if b1.button("Reset to Mean", key="btn_reset", use_container_width=True):
+        if b1.button("Reset to Mean", key="btn_reset", width='stretch'):
             for i in range(n_sliders):
                 st.session_state[f"geo_mode_{i}"] = 0.0
             st.rerun(scope="fragment")
 
-        if b2.button("Random Shape", key="btn_random", use_container_width=True):
+        if b2.button("Random Shape", key="btn_random", width='stretch'):
             rng = np.random.default_rng()
             for i in range(n_sliders):
                 st.session_state[f"geo_mode_{i}"] = float(
@@ -154,7 +154,7 @@ def geometry_viewer(n_sliders, mean_geo, modes_geo, scores_geo, svals_geo, std_d
             height=560, margin=dict(l=0, r=0, b=0, t=30),
             title="Reconstructed Airway Geometry",
         )
-        st.plotly_chart(fig3d, use_container_width=True, key="geo_3d_plot")
+        st.plotly_chart(fig3d, width='stretch', key="geo_3d_plot")
 
         k_plot = min(30, len(svals_geo))
         fig_e = px.line(
@@ -166,7 +166,7 @@ def geometry_viewer(n_sliders, mean_geo, modes_geo, scores_geo, svals_geo, std_d
         fig_e.add_hline(y=95, line_dash="dash", line_color="orange", annotation_text="95%")
         fig_e.add_hline(y=99, line_dash="dash", line_color="red",    annotation_text="99%")
         fig_e.update_layout(height=220, margin=dict(l=10, r=10, b=10, t=30))
-        st.plotly_chart(fig_e, use_container_width=True, key="geo_energy_plot")
+        st.plotly_chart(fig_e, width='stretch', key="geo_energy_plot")
 
 
 n_sliders = st.sidebar.slider("Modes to display", 1, min(20, len(svals_geo)), 10)

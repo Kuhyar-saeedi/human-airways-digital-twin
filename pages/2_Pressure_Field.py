@@ -1,4 +1,4 @@
-"""
+﻿"""
 pages/2_Pressure_Field.py
 =========================
 Interactive 3D pressure field viewer.
@@ -144,4 +144,4 @@ fig.update_layout(
     title=f"Static Pressure — Run {snap} · {region_sel} · {geo_label} geometry",
 )
 
-st.plotly_chart(fig, use_container_width=True)
+st.plotly_chart(fig, width='stretch')

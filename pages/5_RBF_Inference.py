@@ -1,4 +1,4 @@
-"""
+﻿"""
 pages/5_RBF_Inference.py
 =========================
 RBF surrogate model for pressure prediction at unseen geometries.
@@ -174,7 +174,7 @@ with tab_pred:
             height=650, margin=dict(l=0, r=0, b=0, t=40),
             title="RBF-Predicted Static Pressure",
         )
-        st.plotly_chart(fig_pred, use_container_width=True)
+        st.plotly_chart(fig_pred, width='stretch')
 
 # ─ Tab 2: LOO validation ───────────────────────────────────────────────────────
 with tab_loo:
@@ -201,7 +201,7 @@ with tab_loo:
             labels={"LOO Error": "‖error‖"},
         )
         fig_loo.update_layout(height=400)
-        st.plotly_chart(fig_loo, use_container_width=True)
+        st.plotly_chart(fig_loo, width='stretch')
 
         lc1, lc2, lc3 = st.columns(3)
         lc1.metric("Mean LOO error", f"{errors.mean():.4f}")
@@ -244,7 +244,7 @@ with tab_lhs:
         color_discrete_sequence=["#4EB3D3"],
     )
     fig_hist.update_layout(height=380)
-    st.plotly_chart(fig_hist, use_container_width=True)
+    st.plotly_chart(fig_hist, width='stretch')
 
     # Scatter: first two DOE params vs mean predicted pressure
     pa_idx, pb_idx = 0, 3  # A_glotis, d_trachea
@@ -260,4 +260,4 @@ with tab_lhs:
         title="Mean predicted pressure across LHS design space",
     )
     fig_scatter.update_layout(height=460)
-    st.plotly_chart(fig_scatter, use_container_width=True)
+    st.plotly_chart(fig_scatter, width='stretch')

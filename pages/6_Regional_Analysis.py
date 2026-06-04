@@ -1,4 +1,4 @@
-"""
+﻿"""
 pages/6_Regional_Analysis.py
 =============================
 Mean static pressure per anatomical region of the human airway.
@@ -120,7 +120,7 @@ with tab_snap:
             coloraxis_showscale=True,
             coloraxis_colorbar_title="Mean P (Pa)",
         )
-        st.plotly_chart(fig_bar, use_container_width=True)
+        st.plotly_chart(fig_bar, width='stretch')
 
     with col_table:
         display_df = reg_df[["region", "mean_Pa", "std_Pa", "min_Pa", "max_Pa", "n_nodes"]].copy()
@@ -129,7 +129,7 @@ with tab_snap:
             display_df.round(2),
             hide_index=True,
             height=520,
-            use_container_width=True,
+            width='stretch',
         )
 
     # Radial plot — useful for comparing regions on a circular axis
@@ -149,7 +149,7 @@ with tab_snap:
         height=450,
         title="Mean pressure per region (top 12)",
     )
-    st.plotly_chart(fig_radar, use_container_width=True)
+    st.plotly_chart(fig_radar, width='stretch')
 
 # ─ Tab 2: Cross-snapshot heatmap ───────────────────────────────────────────────
 with tab_cross:
@@ -174,7 +174,7 @@ with tab_cross:
         xaxis=dict(tickmode="linear", dtick=5),
         yaxis=dict(tickfont=dict(size=9)),
     )
-    st.plotly_chart(fig_hm, use_container_width=True)
+    st.plotly_chart(fig_hm, width='stretch')
 
     # Most-variable regions
     st.subheader("Most Variable Regions (across 100 runs)")
@@ -189,7 +189,7 @@ with tab_cross:
     )
     fig_var.update_xaxes(tickangle=50, tickfont=dict(size=9))
     fig_var.update_layout(height=420, coloraxis_showscale=False)
-    st.plotly_chart(fig_var, use_container_width=True)
+    st.plotly_chart(fig_var, width='stretch')
 
 # ─ Tab 3: Export ───────────────────────────────────────────────────────────────
 with tab_export:

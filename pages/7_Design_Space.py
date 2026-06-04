@@ -1,4 +1,4 @@
-"""
+﻿"""
 pages/7_Design_Space.py
 ========================
 Design Landscape — understand the parameter space and what drives pressure.
@@ -106,7 +106,7 @@ with tab_sens:
         height=700,
     )
     fig_sens.update_layout(yaxis=dict(tickfont=dict(size=11)))
-    st.plotly_chart(fig_sens, use_container_width=True)
+    st.plotly_chart(fig_sens, width='stretch')
 
     col_top, col_bot = st.columns(2)
     top3 = sens_df.nlargest(3, "AbsCorr")[["Parameter", "Correlation"]]
@@ -136,7 +136,7 @@ with tab_sens:
         "r (mean pressure)":  corr.round(4),
         "r (pressure mode 1)":corr_mode1.round(4),
     }).sort_values("r (mean pressure)", key=np.abs, ascending=False)
-    st.dataframe(full_df, hide_index=True, use_container_width=True)
+    st.dataframe(full_df, hide_index=True, width='stretch')
 
 
 # ── Tab 2: Design Landscape ───────────────────────────────────────────────────
@@ -183,7 +183,7 @@ with tab_land:
         font=dict(color="white"),
         xaxis=dict(gridcolor="#333"), yaxis=dict(gridcolor="#333"),
     )
-    st.plotly_chart(fig_land, use_container_width=True)
+    st.plotly_chart(fig_land, width='stretch')
 
     # Same for geometry space
     st.subheader("Geometry POD space")
@@ -207,7 +207,7 @@ with tab_land:
         font=dict(color="white"),
         xaxis=dict(gridcolor="#333"), yaxis=dict(gridcolor="#333"),
     )
-    st.plotly_chart(fig_geo_land, use_container_width=True)
+    st.plotly_chart(fig_geo_land, width='stretch')
 
     # Geometry vs Pressure POD scores scatter
     st.subheader("Geometry POD Mode 1 vs Pressure POD Mode 1")
@@ -227,7 +227,7 @@ with tab_land:
                           mode="lines", line=dict(color="white", dash="dash"),
                           name=f"OLS (slope={m_cross:.3f})", showlegend=True)
     fig_cross.update_layout(height=420)
-    st.plotly_chart(fig_cross, use_container_width=True)
+    st.plotly_chart(fig_cross, width='stretch')
 
 
 # ── Tab 3: Param–Pressure Grid ────────────────────────────────────────────────
@@ -265,7 +265,7 @@ with tab_matrix:
                 showlegend=False,
                 coloraxis_showscale=False,
             )
-            st.plotly_chart(fig_s, use_container_width=True)
+            st.plotly_chart(fig_s, width='stretch')
 
     # Full parameter correlation heatmap
     st.subheader("Parameter–parameter correlation matrix")
@@ -283,4 +283,4 @@ with tab_matrix:
         xaxis=dict(tickfont=dict(size=9), tickangle=45),
         yaxis=dict(tickfont=dict(size=9)),
     )
-    st.plotly_chart(fig_heat, use_container_width=True)
+    st.plotly_chart(fig_heat, width='stretch')

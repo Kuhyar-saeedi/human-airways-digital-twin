@@ -1,4 +1,4 @@
-"""
+﻿"""
 pages/3_DOE_Analysis.py
 ========================
 Design of Experiments (DOE) parameter space exploration.
@@ -73,7 +73,7 @@ with tab1:
         color_continuous_scale="Viridis",
     )
     fig_pc.update_layout(height=520, margin=dict(l=60, r=40, t=20, b=40))
-    st.plotly_chart(fig_pc, use_container_width=True)
+    st.plotly_chart(fig_pc, width='stretch')
 
     # Per-parameter range table
     st.subheader("Parameter Ranges")
@@ -88,7 +88,7 @@ with tab1:
     st.dataframe(
         range_df[["Label", "min", "max", "mean", "std"]],
         hide_index=True,
-        use_container_width=True,
+        width='stretch',
     )
 
 # ── Tab 2: Pairwise scatter ────────────────────────────────────────────────────
@@ -134,7 +134,7 @@ with tab2:
         )
     )
     fig_sc.update_layout(height=520)
-    st.plotly_chart(fig_sc, use_container_width=True)
+    st.plotly_chart(fig_sc, width='stretch')
 
     # Pearson correlation between selected pair
     corr_val = doe_df[[xp, yp]].corr().iloc[0, 1]
@@ -167,7 +167,7 @@ with tab3:
         xaxis=dict(tickfont=dict(size=9)),
         yaxis=dict(tickfont=dict(size=9)),
     )
-    st.plotly_chart(fig_hm, use_container_width=True)
+    st.plotly_chart(fig_hm, width='stretch')
 
 # ── Tab 4: LHS coverage ────────────────────────────────────────────────────────
 with tab4:
@@ -216,7 +216,7 @@ with tab4:
         title="Parameter coverage: LHS (blue) vs original DOE (red)",
         height=500,
     )
-    st.plotly_chart(fig_lhs, use_container_width=True)
+    st.plotly_chart(fig_lhs, width='stretch')
 
     # Discrepancy metrics
     d_doe = discrepancy_score(doe_df[param_cols].values)

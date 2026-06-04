@@ -1,4 +1,4 @@
-"""
+﻿"""
 pages/8_Animations.py
 =====================
 Animated visualisations to build intuition about the POD decomposition.
@@ -171,7 +171,7 @@ with tab_sweep:
         for k in range(n_frames)
     ]
     fig_sweep.update_layout(**layout)
-    st.plotly_chart(fig_sweep, use_container_width=True, key="fig_geo_sweep")
+    st.plotly_chart(fig_sweep, width='stretch', key="fig_geo_sweep")
 
     e_pct = float(
         svals_geo[mode_idx]**2 / (svals_geo**2).sum() * 100
@@ -245,7 +245,7 @@ with tab_reel:
         for k in range(len(snap_indices))
     ]
     fig_reel.update_layout(**reel_layout)
-    st.plotly_chart(fig_reel, use_container_width=True, key="fig_reel")
+    st.plotly_chart(fig_reel, width='stretch', key="fig_reel")
 
     st.caption(f"Showing {len(snap_indices)} frames  |  global P range: {p_global_min:.0f} – {p_global_max:.0f} Pa")
 
@@ -328,7 +328,7 @@ with tab_pmode:
         for k in range(n_frames_p)
     ]
     fig_pmode.update_layout(**pmode_layout)
-    st.plotly_chart(fig_pmode, use_container_width=True, key="fig_pmode")
+    st.plotly_chart(fig_pmode, width='stretch', key="fig_pmode")
 
     ep_pct = float(svals_pres[pmode_idx]**2 / (svals_pres**2).sum() * 100)
     st.info(f"Pressure Mode {pmode_idx+1} captures **{ep_pct:.1f}%** of total pressure variance.")
