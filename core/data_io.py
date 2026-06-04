@@ -121,23 +121,51 @@ def load_settings() -> dict:
 
 @_cache
 def load_ref_coords(stride: int = STRIDE) -> np.ndarray:
+    if stride == STRIDE:
+        cached = PRECOMPUTED_DIR / "ref_coords_s50.npy"
+        if cached.exists():
+            return np.load(cached)
     raw = read_bin(PRESSURE_DIR / "points.bin")
     return raw.reshape(-1, 3)[::stride]
 
 
 @_cache
 def load_snapshot_coords(n: int, stride: int = STRIDE) -> np.ndarray:
-    raw = read_bin(POINTS_DIR / "Snapshots" / f"snapshot{n}.bin")
-    return raw.reshape(-1, 3)[::stride]
+    bin_path = POINTS_DIR / "Snapshots" / f"snapshot{n}.bin"
+    if bin_path.exists():
+        return read_bin(bin_path).reshape(-1, 3)[::stride]
+    # Cloud fallback: reconstruct from precomputed geometry POD
+    pre = load_precomputed_pod("geometry")
+    if pre is not None:
+        rec = (pre["mean"] + pre["modes"] @ pre["scores"][n - 1]).reshape(-1, 3)
+        return rec
+    raise FileNotFoundError(
+        f"{bin_path} not found and no precomputed geometry POD available."
+    )
 
 
 @_cache
 def load_pressure_snapshot(n: int, stride: int = STRIDE) -> np.ndarray:
-    return read_bin(PRESSURE_DIR / "Snapshots" / f"snapshot{n}.bin")[::stride]
+    bin_path = PRESSURE_DIR / "Snapshots" / f"snapshot{n}.bin"
+    if bin_path.exists():
+        return read_bin(bin_path)[::stride]
+    # Cloud fallback: load from precomputed all_pressures matrix
+    cached = PRECOMPUTED_DIR / "all_pressures_s50.npz"
+    if cached.exists():
+        return np.load(cached)["data"][n - 1]
+    raise FileNotFoundError(
+        f"{bin_path} not found and no precomputed all_pressures_s50.npz available. "
+        "Run scripts/precompute.py first."
+    )
 
 
 @_cache
 def load_all_coords(stride: int = STRIDE) -> np.ndarray:
+    if stride == STRIDE:
+        pre = load_precomputed_pod("geometry")
+        if pre is not None:
+            # Exact reconstruction: 100 snapshots → 100 modes → lossless
+            return pre["scores"] @ pre["modes"].T + pre["mean"]
     n_pts = len(load_ref_coords(stride))
     X = np.empty((100, n_pts * 3), dtype=np.float64)
     for i in range(100):
@@ -147,6 +175,10 @@ def load_all_coords(stride: int = STRIDE) -> np.ndarray:
 
 @_cache
 def load_all_pressures(stride: int = STRIDE) -> np.ndarray:
+    if stride == STRIDE:
+        cached = PRECOMPUTED_DIR / "all_pressures_s50.npz"
+        if cached.exists():
+            return np.load(cached)["data"]
     n_pts = len(load_ref_coords(stride))
     P = np.empty((100, n_pts), dtype=np.float64)
     for i in range(100):

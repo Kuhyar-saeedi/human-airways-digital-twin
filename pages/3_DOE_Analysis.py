@@ -110,9 +110,17 @@ with tab2:
             yp: PARAM_LABELS.get(yp, yp),
             "snapshot_num": "Run",
         },
-        trendline="ols",  # ordinary least-squares regression line
         title=f"{PARAM_LABELS.get(xp, xp)}  vs  {PARAM_LABELS.get(yp, yp)}",
     )
+
+    # Manual OLS trendline (no statsmodels needed)
+    xd = doe_df[xp].values.astype(float)
+    yd = doe_df[yp].values.astype(float)
+    m, b = np.polyfit(xd, yd, 1)
+    x_line = np.linspace(xd.min(), xd.max(), 50)
+    fig_sc.add_scatter(x=x_line, y=m * x_line + b,
+                       mode="lines", line=dict(color="white", dash="dash"),
+                       name="OLS trend", showlegend=True)
 
     # Star marker for highlighted run
     h_row = doe_df[doe_df["snapshot_num"] == highlight].iloc[0]
