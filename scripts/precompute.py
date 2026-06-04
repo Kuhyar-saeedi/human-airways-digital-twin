@@ -139,6 +139,11 @@ def build_precomputed(pod_stride: int = 50):
     )
     print(f"  pod_pressure.npz saved  ({(PRECOMP_DIR/'pod_pressure.npz').stat().st_size/1e6:.1f} MB)")
 
+    # All pressures matrix — needed by cloud deployment (no .bin files there)
+    print("  Saving all_pressures_s50.npz for cloud deployment…")
+    np.savez_compressed(PRECOMP_DIR / "all_pressures_s50.npz", data=P)
+    print(f"  all_pressures_s50.npz saved  ({(PRECOMP_DIR/'all_pressures_s50.npz').stat().st_size/1e6:.1f} MB)")
+
     print("  [1/3] Done — precomputed/ is ready.\n")
     return ref, mean_p, modes_p  # returned for VTK step
 
