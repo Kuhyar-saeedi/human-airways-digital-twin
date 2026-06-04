@@ -1,13 +1,14 @@
-﻿"""
+"""
 pages/7_Design_Space.py
 ========================
 Design Landscape — understand the parameter space and what drives pressure.
 
 Tabs
 ----
-1. Parameter Sensitivity  — which of the 26 geometry params most affects pressure
+1. Parameter Sensitivity  — Pearson correlation of each param with mean pressure
 2. Design Landscape       — 2D map of all 100 runs in POD score space, colored by pressure
 3. Param–Pressure Matrix  — scatter grid of key params vs mean pressure
+4. Sobol Indices          — variance-based global sensitivity (first-order + total)
 """
 
 import sys
@@ -26,6 +27,8 @@ from core.data_io import (
     PARAM_LABELS, load_precomputed_pod,
 )
 from core.pod import compute_pod, modes_for_energy
+from core.rbf import build_rbf, predict
+from core.lhs import latin_hypercube
 
 st.set_page_config(page_title="Design Space", page_icon="🗺️", layout="wide")
 st.title("🗺️ Design Space — What Drives Airway Pressure?")
@@ -66,10 +69,11 @@ else:
         _, _, scores_geo, _ = _geo_pod(load_all_coords(STRIDE))
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
-tab_sens, tab_land, tab_matrix = st.tabs([
+tab_sens, tab_land, tab_matrix, tab_sobol = st.tabs([
     "📊 Parameter Sensitivity",
     "🌐 Design Landscape",
     "🔢 Param–Pressure Grid",
+    "🎲 Sobol Indices",
 ])
 
 # ── Tab 1: Parameter Sensitivity ──────────────────────────────────────────────
@@ -284,3 +288,164 @@ with tab_matrix:
         yaxis=dict(tickfont=dict(size=9)),
     )
     st.plotly_chart(fig_heat, width='stretch')
+
+
+# ── Tab 4: Sobol Sensitivity Indices ─────────────────────────────────────────
+with tab_sobol:
+    st.subheader("Variance-Based Global Sensitivity — Sobol Indices")
+    st.markdown("""
+    Sobol indices measure **how much of the output variance** is explained by each input parameter.
+    Unlike Pearson correlation (linear only), Sobol captures **non-linear and interaction effects**.
+
+    - **First-order S₁**: variance explained by parameter alone
+    - **Total Sₜ**: variance explained including all interactions with other parameters
+    - **Sₜ − S₁**: the interaction contribution
+
+    Uses the **Saltelli (2010)** estimator with LHS + RBF surrogate — no extra CFD needed.
+    """)
+
+    col1, col2 = st.columns(2)
+    N_sobol = col1.select_slider(
+        "Sample size N (higher = more accurate, slower)",
+        options=[128, 256, 512, 1024], value=512, key="sobol_N"
+    )
+    sobol_output = col2.radio(
+        "Output variable",
+        ["Mean pressure", "ΔP (airway resistance)"],
+        key="sobol_out", horizontal=True,
+    )
+
+    st.caption(
+        f"Requires {N_sobol * (len(param_cols) + 2):,} RBF evaluations "
+        f"({N_sobol} × ({len(param_cols)} params + 2)). "
+        f"Each takes <1 ms — total ~{N_sobol*(len(param_cols)+2)/1000:.1f}s."
+    )
+
+    if st.button("Compute Sobol Indices", type="primary", key="run_sobol"):
+
+        # ── Build RBF surrogate ──────────────────────────────────────────────
+        params_norm_s = (params_raw - params_raw.min(axis=0)) / (
+            params_raw.max(axis=0) - params_raw.min(axis=0) + 1e-12
+        )
+        lo_s = params_raw.min(axis=0)
+        hi_s = params_raw.max(axis=0)
+
+        k_s = modes_for_energy(scores_pres.std(axis=0) if hasattr(scores_pres, 'std')
+                               else np.ones(scores_pres.shape[1]), 0.99)
+        # Use precomputed scores directly
+        k_s = min(modes_for_energy(
+            np.array([np.linalg.norm(scores_pres[:, i]) for i in range(scores_pres.shape[1])]),
+            0.99
+        ), scores_pres.shape[1])
+
+        rbf_s = build_rbf(params_norm_s, scores_pres[:, :k_s], kernel="thin_plate_spline")
+
+        def evaluate_surrogate(X_norm):
+            """Evaluate RBF → reconstruct → compute scalar output."""
+            sc = predict(rbf_s, X_norm)
+            results = np.empty(len(X_norm))
+            for i in range(len(X_norm)):
+                field = mean_pressure_per_run.mean() + (
+                    (mean_pres + modes_pres[:, :k_s] @ sc[i]) - mean_pres
+                ).mean()
+                # Simpler: just use predicted mean pressure
+                pred_field = mean_pres + modes_pres[:, :k_s] @ sc[i]
+                if sobol_output == "Mean pressure":
+                    results[i] = float(pred_field.mean())
+                else:
+                    results[i] = float(pred_field.max() - pred_field.min())
+            return results
+
+        # ── Saltelli estimator ───────────────────────────────────────────────
+        with st.spinner(f"Running Saltelli estimator (N={N_sobol}, d={len(param_cols)})…"):
+            rng = np.random.default_rng(42)
+            d   = len(param_cols)
+
+            # Two independent samples in [0,1]^d
+            A_raw = latin_hypercube(N_sobol, lo_s, hi_s, seed=42)
+            B_raw = latin_hypercube(N_sobol, lo_s, hi_s, seed=123)
+            A_norm = (A_raw - lo_s) / (hi_s - lo_s + 1e-12)
+            B_norm = (B_raw - lo_s) / (hi_s - lo_s + 1e-12)
+
+            fA = evaluate_surrogate(A_norm)
+            fB = evaluate_surrogate(B_norm)
+            var_Y = float(np.var(np.concatenate([fA, fB])))
+
+            S1 = np.zeros(d)
+            ST = np.zeros(d)
+
+            prog = st.progress(0, text="Computing per-parameter Sobol indices…")
+            for i in range(d):
+                # A_Bi: copy of A with column i from B
+                A_Bi      = A_norm.copy()
+                A_Bi[:, i]= B_norm[:, i]
+                fABi      = evaluate_surrogate(A_Bi)
+
+                # Saltelli 2010 estimators
+                S1[i] = float(np.mean(fB * (fABi - fA))) / (var_Y + 1e-12)
+                ST[i] = float(np.mean((fA - fABi) ** 2)) / (2 * var_Y + 1e-12)
+                prog.progress((i + 1) / d, text=f"Parameter {i+1}/{d}")
+            prog.empty()
+
+        # ── Clamp to [0, 1] (estimator can give small negatives) ─────────────
+        S1 = np.clip(S1, 0, 1)
+        ST = np.clip(ST, 0, 1)
+
+        sobol_df = pd.DataFrame({
+            "Parameter":   labels,
+            "Raw name":    param_cols,
+            "S1 (first-order)": S1.round(4),
+            "ST (total)":       ST.round(4),
+            "Interactions":     (ST - S1).clip(0).round(4),
+        }).sort_values("ST (total)", ascending=False)
+
+        # ── Grouped bar chart ────────────────────────────────────────────────
+        top_n = st.slider("Show top N parameters", 5, len(param_cols), 15, key="sobol_topn")
+        plot_df = sobol_df.head(top_n)
+
+        fig_sobol = go.Figure()
+        fig_sobol.add_bar(
+            x=plot_df["Parameter"], y=plot_df["S1 (first-order)"],
+            name="S₁ (first-order)", marker_color="#4EB3D3",
+        )
+        fig_sobol.add_bar(
+            x=plot_df["Parameter"], y=plot_df["Interactions"],
+            name="Interaction contribution (Sₜ−S₁)", marker_color="#F4A261",
+        )
+        fig_sobol.update_layout(
+            barmode="stack",
+            xaxis=dict(tickangle=45, tickfont=dict(size=10)),
+            yaxis_title="Sobol Index",
+            title=f"Sobol Sensitivity Indices — output: {sobol_output} (N={N_sobol})",
+            legend=dict(x=0.6, y=0.98),
+            height=500,
+        )
+        st.plotly_chart(fig_sobol, width='stretch')
+
+        # ── Comparison: Pearson vs Sobol ─────────────────────────────────────
+        st.subheader("Pearson correlation vs Sobol S₁ — do they agree?")
+        comp_df = pd.DataFrame({
+            "Parameter":  sobol_df["Parameter"],
+            "|Pearson r|": np.abs(corr)[
+                [param_cols.index(c) for c in sobol_df["Raw name"]]
+            ].round(4),
+            "Sobol S₁":   sobol_df["S1 (first-order)"].values,
+        }).head(15)
+
+        fig_comp = px.scatter(
+            comp_df, x="|Pearson r|", y="Sobol S₁",
+            text="Parameter", size_max=10,
+            title="Pearson |r| vs Sobol S₁ — divergence reveals non-linear effects",
+        )
+        fig_comp.update_traces(textposition="top center", textfont=dict(size=9))
+        fig_comp.update_layout(height=420)
+        st.plotly_chart(fig_comp, width='stretch')
+
+        st.caption(
+            "Points above the diagonal = parameter has more influence than Pearson suggests "
+            "(non-linear effects). Points on the diagonal = purely linear relationship."
+        )
+
+        st.divider()
+        st.markdown("**Full Sobol indices table**")
+        st.dataframe(sobol_df.reset_index(drop=True), hide_index=True, width='stretch')

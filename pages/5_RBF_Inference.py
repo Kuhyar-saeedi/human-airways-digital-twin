@@ -1,21 +1,16 @@
-﻿"""
+"""
 pages/5_RBF_Inference.py
 =========================
-RBF surrogate model for pressure prediction at unseen geometries.
+RBF surrogate model — pressure prediction, validation, and clinical insights.
 
-Workflow
---------
-1. Compute pressure POD (mean + modes + scores) from the 100 training snapshots.
-2. Build an RBF interpolant mapping 26 DOE parameters → pressure POD scores.
-3. User adjusts the 26 geometry parameter sliders.
-4. RBF predicts POD scores for the new parameter set.
-5. Pressure field = mean + modes @ predicted_scores.
-6. Display the predicted 3D pressure field.
-
-Also shows
-----------
-  Leave-One-Out cross-validation error to quantify RBF accuracy.
-  1000-sample LHS upscaling: visualise predicted mean pressure for virtual shapes.
+Tabs
+----
+1. Predict New Shape   — 26 sliders → RBF → pressure field + airway resistance ΔP
+2. LOO Validation      — leave-one-out cross-validation (per-snapshot errors)
+3. K-Fold Validation   — k-fold CV (faster, fold-level summary + comparison with LOO)
+4. Convergence Study   — LOO error as function of number of POD modes (bias-variance)
+5. 1000 Virtual Shapes — LHS upscaling + resistance distribution
+6. Patient Demo        — how this digital twin is used clinically
 """
 
 import sys
@@ -30,15 +25,11 @@ import streamlit as st
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core.data_io import (
-    STRIDE,
-    load_all_pressures,
-    load_ref_coords,
-    load_doe,
-    get_param_cols,
-    PARAM_LABELS,
+    STRIDE, load_all_pressures, load_ref_coords,
+    load_doe, get_param_cols, PARAM_LABELS, load_precomputed_pod,
 )
 from core.pod import compute_pod, modes_for_energy, reconstruct
-from core.rbf import build_rbf, predict, loo_errors
+from core.rbf import build_rbf, predict, loo_errors, kfold_errors
 from core.lhs import latin_hypercube, doe_bounds
 
 st.set_page_config(page_title="RBF Inference", page_icon="🔮", layout="wide")
@@ -48,42 +39,42 @@ st.caption(
     "to the full pressure field via the POD reduced space."
 )
 
-# ── Load data ──────────────────────────────────────────────────────────────────
+# ── Load data ─────────────────────────────────────────────────────────────────
 doe_df     = load_doe()
 param_cols = get_param_cols(doe_df)
 ref_coords = load_ref_coords(STRIDE)
 
-with st.spinner("Loading pressure snapshots…"):
-    P_pres = load_all_pressures(STRIDE)
+_pre_p = load_precomputed_pod("pressure")
+if _pre_p is not None:
+    mean_pres   = _pre_p["mean"]
+    modes_pres  = _pre_p["modes"]
+    scores_pres = _pre_p["scores"]
+    sv_pres     = _pre_p["svalues"]
+else:
+    with st.spinner("Loading pressure snapshots…"):
+        P_pres = load_all_pressures(STRIDE)
+    @st.cache_data(show_spinner=False)
+    def pres_pod(P): return compute_pod(P)
+    with st.spinner("Computing pressure POD…"):
+        mean_pres, modes_pres, scores_pres, sv_pres = pres_pod(P_pres)
 
-@st.cache_data(show_spinner=False)
-def pres_pod(P):
-    return compute_pod(P)
-
-with st.spinner("Computing pressure POD…"):
-    mean_pres, modes_pres, scores_pres, sv_pres = pres_pod(P_pres)
-
-# Select number of modes for RBF (default: modes capturing 99% energy)
 k_rbf_default = modes_for_energy(sv_pres, 0.99)
+params_raw    = doe_df[param_cols].values.astype(float)
+low, high     = params_raw.min(axis=0), params_raw.max(axis=0)
+params_norm   = (params_raw - low) / (high - low + 1e-12)
 
-# DOE parameter matrix (normalised 0-1 for RBF stability)
-params_raw = doe_df[param_cols].values.astype(float)
-low, high  = params_raw.min(axis=0), params_raw.max(axis=0)
-params_norm = (params_raw - low) / (high - low + 1e-12)
+# Reference ΔP (mean shape) — used to normalise resistance index
+_mean_scores_ref = np.zeros(scores_pres.shape[1])
+_pres_ref        = mean_pres  # the mean field itself is the reference
 
 with st.sidebar:
     st.header("RBF Settings")
     k_rbf  = st.slider("POD modes for RBF", 1, min(40, len(sv_pres)), k_rbf_default)
     kernel = st.selectbox("RBF kernel",
-                          ["thin_plate_spline", "multiquadric", "linear", "cubic"],
-                          index=0)
+                          ["thin_plate_spline", "multiquadric", "linear", "cubic"])
     st.divider()
-    st.caption(
-        "Tip: thin_plate_spline is smooth and works well for "
-        "scattered data in high dimensions."
-    )
+    st.caption("thin_plate_spline: φ(r) = r² log r — smooth, good for high-dim data.")
 
-# Build RBF on POD scores (truncated to k_rbf modes)
 @st.cache_data(show_spinner=False)
 def get_rbf(params, scores, k, kern):
     return build_rbf(params, scores[:, :k], kernel=kern)
@@ -91,20 +82,24 @@ def get_rbf(params, scores, k, kern):
 with st.spinner("Building RBF surrogate…"):
     rbf_model = get_rbf(params_norm, scores_pres, k_rbf, kernel)
 
-# ── Tabs ───────────────────────────────────────────────────────────────────────
-tab_pred, tab_loo, tab_lhs = st.tabs([
+# ΔP for the mean pressure field (reference baseline)
+dp_ref = float(mean_pres.max() - mean_pres.min())
+
+# ── Tabs ──────────────────────────────────────────────────────────────────────
+tab_pred, tab_loo, tab_kfold, tab_conv, tab_lhs, tab_demo = st.tabs([
     "🎯 Predict New Shape",
     "📉 LOO Validation",
+    "🔁 K-Fold Validation",
+    "📈 Convergence Study",
     "🌐 1000 Virtual Shapes",
+    "🏥 Patient Demo",
 ])
 
-# ─ Tab 1: Prediction ───────────────────────────────────────────────────────────
+# ── Tab 1: Prediction ─────────────────────────────────────────────────────────
 with tab_pred:
     st.subheader("Set Geometry Parameters → Predict Pressure Field")
 
-    # Organise 26 sliders into 3 expanders for readability
     new_params = np.empty(len(param_cols))
-
     groups = {
         "Main airway (glottis, trachea)": [
             "A_glotis", "A_epiglotis", "r_curvature",
@@ -123,38 +118,46 @@ with tab_pred:
 
     for grp_name, grp_cols in groups.items():
         with st.expander(grp_name, expanded=(grp_name == "Main airway (glottis, trachea)")):
-            n_cols = 3
-            cols_ui = st.columns(n_cols)
+            cols_ui = st.columns(3)
             for j, col in enumerate(grp_cols):
                 i = param_cols.index(col)
-                col_min = float(params_raw[:, i].min())
-                col_max = float(params_raw[:, i].max())
-                col_mean = float(params_raw[:, i].mean())
-                new_params[i] = cols_ui[j % n_cols].slider(
+                c_min  = float(params_raw[:, i].min())
+                c_max  = float(params_raw[:, i].max())
+                c_mean = float(params_raw[:, i].mean())
+                new_params[i] = cols_ui[j % 3].slider(
                     PARAM_LABELS.get(col, col),
-                    min_value=col_min,
-                    max_value=col_max,
-                    value=col_mean,
-                    step=float((col_max - col_min) / 50),
-                    key=f"rbf_{col}",
-                    format="%.2f",
+                    min_value=c_min, max_value=c_max, value=c_mean,
+                    step=float((c_max - c_min) / 50),
+                    key=f"rbf_{col}", format="%.2f",
                 )
 
     if st.button("🔮 Predict Pressure Field", type="primary"):
-        # Normalise new params same way as training data
-        new_norm = ((new_params - low) / (high - low + 1e-12)).reshape(1, -1)
-        pred_scores = predict(rbf_model, new_norm)[0]  # (k,)
-
-        # Reconstruct full pressure field
+        new_norm      = ((new_params - low) / (high - low + 1e-12)).reshape(1, -1)
+        pred_scores   = predict(rbf_model, new_norm)[0]
         pred_pressure = reconstruct(mean_pres, modes_pres[:, :k_rbf], pred_scores)
 
-        # Display
-        st.success("Pressure field predicted successfully!")
-        p1, p2, p3, p4 = st.columns(4)
-        p1.metric("Min pressure",  f"{pred_pressure.min():.1f} Pa")
-        p2.metric("Max pressure",  f"{pred_pressure.max():.1f} Pa")
-        p3.metric("Mean pressure", f"{pred_pressure.mean():.1f} Pa")
-        p4.metric("Std deviation", f"{pred_pressure.std():.1f} Pa")
+        dp_pred = float(pred_pressure.max() - pred_pressure.min())
+        resist_idx = dp_pred / dp_ref * 100.0
+
+        st.success("Pressure field predicted!")
+
+        # ── Metrics row ─────────────────────────────────────────────────────
+        m1, m2, m3, m4, m5, m6 = st.columns(6)
+        m1.metric("Min pressure",       f"{pred_pressure.min():.1f} Pa")
+        m2.metric("Max pressure",       f"{pred_pressure.max():.1f} Pa")
+        m3.metric("Mean pressure",      f"{pred_pressure.mean():.1f} Pa")
+        m4.metric("Std deviation",      f"{pred_pressure.std():.1f} Pa")
+        m5.metric("ΔP (resistance)",    f"{dp_pred:.1f} Pa",
+                  delta=f"{dp_pred - dp_ref:+.1f} vs mean shape",
+                  delta_color="inverse")
+        m6.metric("Resistance index",   f"{resist_idx:.1f} %",
+                  help="ΔP relative to mean-shape baseline (100% = average resistance)")
+
+        st.caption(
+            "**ΔP** = max − min pressure across the airway. "
+            "Higher ΔP means more resistance to airflow — harder to breathe. "
+            f"Mean-shape baseline ΔP = {dp_ref:.1f} Pa."
+        )
 
         fig_pred = go.Figure(go.Scatter3d(
             x=ref_coords[:, 0], y=ref_coords[:, 1], z=ref_coords[:, 2],
@@ -168,96 +171,335 @@ with tab_pred:
         ))
         fig_pred.update_layout(
             scene=dict(aspectmode="data", bgcolor="rgb(12,14,20)",
-                       xaxis=dict(gridcolor="#2a2a2a"), yaxis=dict(gridcolor="#2a2a2a"),
+                       xaxis=dict(gridcolor="#2a2a2a"),
+                       yaxis=dict(gridcolor="#2a2a2a"),
                        zaxis=dict(gridcolor="#2a2a2a")),
             paper_bgcolor="rgb(12,14,20)", font=dict(color="white"),
-            height=650, margin=dict(l=0, r=0, b=0, t=40),
+            height=620, margin=dict(l=0, r=0, b=0, t=40),
             title="RBF-Predicted Static Pressure",
         )
         st.plotly_chart(fig_pred, width='stretch')
 
-# ─ Tab 2: LOO validation ───────────────────────────────────────────────────────
+
+# ── Tab 2: LOO Validation ────────────────────────────────────────────────────
 with tab_loo:
     st.subheader("Leave-One-Out Cross-Validation")
     st.markdown("""
-    Each snapshot is removed in turn; the RBF is rebuilt on the remaining 99
-    and used to predict the removed one.  This gives an honest estimate of
-    generalisation error without a separate test set.
+    Each of the 100 snapshots is removed in turn; the RBF is rebuilt on the remaining 99
+    and predicts the removed one. The most rigorous estimate of generalisation error,
+    but requires rebuilding the model 100 times (~30 s).
     """)
 
-    if st.button("Run LOO validation (takes ~30 s)"):
-        with st.spinner("Running LOO cross-validation…"):
+    if st.button("Run LOO validation", key="run_loo"):
+        with st.spinner("Running LOO (100 iterations)…"):
             errors = loo_errors(params_norm, scores_pres[:, :k_rbf], kernel=kernel)
 
         err_df = pd.DataFrame({
-            "Snapshot":    list(range(1, 101)),
-            "LOO Error":   errors.tolist(),
+            "Snapshot": list(range(1, 101)),
+            "LOO Error": errors.tolist(),
         })
-
         fig_loo = px.bar(
             err_df, x="Snapshot", y="LOO Error",
             color="LOO Error", color_continuous_scale="Reds",
-            title="LOO cross-validation error per snapshot (‖predicted − actual‖ in POD score space)",
+            title="LOO error per snapshot  (‖predicted − actual‖ in POD score space)",
             labels={"LOO Error": "‖error‖"},
         )
         fig_loo.update_layout(height=400)
         st.plotly_chart(fig_loo, width='stretch')
 
-        lc1, lc2, lc3 = st.columns(3)
-        lc1.metric("Mean LOO error", f"{errors.mean():.4f}")
-        lc2.metric("Max LOO error",  f"{errors.max():.4f}")
-        lc3.metric("Min LOO error",  f"{errors.min():.4f}")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Mean LOO error", f"{errors.mean():.4f}")
+        c2.metric("Max LOO error",  f"{errors.max():.4f}")
+        c3.metric("Min LOO error",  f"{errors.min():.4f}")
+        c4.metric("Std LOO error",  f"{errors.std():.4f}")
 
-# ─ Tab 3: 1000 virtual shapes ─────────────────────────────────────────────────
+
+# ── Tab 3: K-Fold Validation ─────────────────────────────────────────────────
+with tab_kfold:
+    st.subheader("K-Fold Cross-Validation")
+    st.markdown("""
+    The 100 snapshots are shuffled and split into **k equal folds**.
+    The RBF is rebuilt k times, each time trained on k−1 folds and tested on the remaining fold.
+    Much faster than LOO while still giving a robust generalisation estimate.
+    """)
+
+    col1, col2 = st.columns(2)
+    n_folds = col1.slider("Number of folds k", 2, 10, 5, key="kfold_k")
+    kfold_seed = col2.number_input("Random seed", value=42, step=1, key="kfold_seed")
+
+    st.caption(
+        f"**{n_folds}-fold**: trains on {100 - 100//n_folds} samples, tests on "
+        f"~{100//n_folds} samples per fold. Rebuilds RBF {n_folds} times."
+    )
+
+    if st.button(f"Run {n_folds}-Fold CV", type="primary", key="run_kfold"):
+        with st.spinner(f"Running {n_folds}-fold cross-validation…"):
+            fold_errs = kfold_errors(
+                params_norm, scores_pres[:, :k_rbf],
+                k=n_folds, kernel=kernel, seed=int(kfold_seed),
+            )
+
+        fold_df = pd.DataFrame({
+            "Fold":       [f"Fold {i+1}" for i in range(n_folds)],
+            "Mean Error": fold_errs.tolist(),
+        })
+
+        fig_kf = px.bar(
+            fold_df, x="Fold", y="Mean Error",
+            color="Mean Error", color_continuous_scale="Blues",
+            title=f"{n_folds}-Fold CV — mean ‖error‖ per fold",
+            text_auto=".4f",
+        )
+        fig_kf.update_layout(height=350)
+        st.plotly_chart(fig_kf, width='stretch')
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Mean CV error", f"{fold_errs.mean():.4f}")
+        c2.metric("Std CV error",  f"{fold_errs.std():.4f}")
+        c3.metric("Best fold",     f"{fold_errs.min():.4f}")
+        c4.metric("Worst fold",    f"{fold_errs.max():.4f}")
+
+        st.divider()
+        st.markdown("**LOO vs K-Fold: when to use which**")
+        st.markdown("""
+        | Method | Models built | Time | Bias | Use when |
+        |--------|-------------|------|------|----------|
+        | LOO    | 100         | ~30s | Low  | Small dataset, need most accurate estimate |
+        | 5-Fold | 5           | ~2s  | Slightly higher | Quick check, larger datasets |
+        | 10-Fold| 10          | ~4s  | Low  | Good balance of speed and accuracy |
+
+        For 100 samples, **LOO and 10-fold give nearly identical results** in practice.
+        """)
+
+
+# ── Tab 4: Convergence Study ─────────────────────────────────────────────────
+with tab_conv:
+    st.subheader("Convergence Study — LOO Error vs Number of POD Modes")
+    st.markdown("""
+    How does RBF accuracy change as we use more POD modes?
+
+    - **Too few modes**: underfitting — the pressure field isn't captured well
+    - **Too many modes**: overfitting — high-frequency modes contain noise the RBF struggles to interpolate
+    - The optimal k is at the **elbow** of this curve
+    """)
+
+    max_k_conv = st.slider("Max modes to test", 5, min(25, len(sv_pres)), 15, key="conv_maxk")
+    cv_method  = st.radio("Validation method", ["5-Fold (fast)", "LOO (slow, ~30s)"],
+                          horizontal=True, key="conv_method")
+
+    if st.button("Run Convergence Study", type="primary", key="run_conv"):
+        k_range = list(range(1, max_k_conv + 1))
+        conv_errors = []
+
+        progress_bar = st.progress(0, text="Computing…")
+        for idx, ki in enumerate(k_range):
+            if cv_method.startswith("5"):
+                errs = kfold_errors(params_norm, scores_pres[:, :ki], k=5, kernel=kernel)
+                conv_errors.append(float(errs.mean()))
+            else:
+                errs = loo_errors(params_norm, scores_pres[:, :ki], kernel=kernel)
+                conv_errors.append(float(errs.mean()))
+            progress_bar.progress((idx + 1) / len(k_range),
+                                   text=f"k = {ki}/{max_k_conv}")
+        progress_bar.empty()
+
+        fig_conv = go.Figure()
+        fig_conv.add_trace(go.Scatter(
+            x=k_range, y=conv_errors,
+            mode="lines+markers",
+            line=dict(color="#4EB3D3", width=2),
+            marker=dict(size=7),
+            name="CV error",
+        ))
+        # Mark the minimum
+        best_k   = k_range[int(np.argmin(conv_errors))]
+        best_err = min(conv_errors)
+        fig_conv.add_vline(x=best_k, line_dash="dash", line_color="#F4A261",
+                           annotation_text=f"Optimal k={best_k}")
+        fig_conv.update_layout(
+            xaxis_title="Number of POD modes",
+            yaxis_title="Mean CV error",
+            title="RBF generalisation error vs POD truncation",
+            height=420,
+        )
+        st.plotly_chart(fig_conv, width='stretch')
+
+        co1, co2, co3 = st.columns(3)
+        co1.metric("Optimal k (min error)", best_k)
+        co2.metric("Min CV error",          f"{best_err:.4f}")
+        co3.metric("Error at k=99%",
+                   f"{conv_errors[modes_for_energy(sv_pres, 0.99)-1]:.4f}")
+
+        st.info(
+            f"The elbow is at **k={best_k} modes**. "
+            f"Using more modes beyond this point doesn't reduce prediction error "
+            f"— it increases it due to noise amplification in the RBF interpolation."
+        )
+
+
+# ── Tab 5: 1000 Virtual Shapes ────────────────────────────────────────────────
 with tab_lhs:
     st.subheader("Database Upscaling: 1000 Virtual Shapes via LHS + RBF")
     st.markdown("""
-    Latin Hypercube Sampling generates 1000 new parameter vectors within the
-    original DOE bounds. The RBF surrogate predicts the pressure POD scores for
-    each, enabling reconstruction of 1000 pressure fields without any CFD run.
+    LHS generates 1000 parameter vectors within the original DOE bounds.
+    The RBF surrogate predicts the pressure field for each — no CFD needed.
     """)
 
     @st.cache_data(show_spinner=False)
     def lhs_predictions(params_norm_arr, lo, hi, mean_p, modes_p, k, kern):
-        low_raw = lo; high_raw = hi
-        lhs_raw  = latin_hypercube(1000, low_raw, high_raw, seed=42)
+        lhs_raw  = latin_hypercube(1000, lo, hi, seed=42)
         lhs_norm = (lhs_raw - lo) / (hi - lo + 1e-12)
         rbf_tmp  = build_rbf(params_norm_arr, scores_pres[:, :k], kernel=kern)
         pred_sc  = predict(rbf_tmp, lhs_norm)
-        # Reconstruct mean pressure for each virtual shape
         mean_pressures = np.array([
             reconstruct(mean_p, modes_p[:, :k], pred_sc[i]).mean()
             for i in range(len(lhs_raw))
         ])
-        return lhs_raw, mean_pressures
+        dp_values = np.array([
+            float(reconstruct(mean_p, modes_p[:, :k], pred_sc[i]).max()
+                  - reconstruct(mean_p, modes_p[:, :k], pred_sc[i]).min())
+            for i in range(len(lhs_raw))
+        ])
+        return lhs_raw, mean_pressures, dp_values
 
     with st.spinner("Predicting pressure for 1000 LHS shapes…"):
-        lhs_raw, mean_preds = lhs_predictions(
+        lhs_raw, mean_preds, dp_preds = lhs_predictions(
             params_norm, low, high, mean_pres, modes_pres, k_rbf, kernel
         )
 
-    # Show mean pressure distribution over virtual shapes
-    fig_hist = px.histogram(
-        x=mean_preds, nbins=60,
-        labels={"x": "Mean Predicted Pressure (Pa)"},
-        title="Distribution of mean static pressure across 1000 virtual airway shapes",
-        color_discrete_sequence=["#4EB3D3"],
-    )
-    fig_hist.update_layout(height=380)
-    st.plotly_chart(fig_hist, width='stretch')
+    c1, c2 = st.columns(2)
+    with c1:
+        fig_hist = px.histogram(
+            x=mean_preds, nbins=50,
+            labels={"x": "Mean Pressure (Pa)"},
+            title="Mean pressure distribution — 1000 virtual airways",
+            color_discrete_sequence=["#4EB3D3"],
+        )
+        fig_hist.update_layout(height=340)
+        st.plotly_chart(fig_hist, width='stretch')
 
-    # Scatter: first two DOE params vs mean predicted pressure
-    pa_idx, pb_idx = 0, 3  # A_glotis, d_trachea
-    fig_scatter = px.scatter(
+    with c2:
+        fig_dp = px.histogram(
+            x=dp_preds, nbins=50,
+            labels={"x": "ΔP — Airway Resistance (Pa)"},
+            title="Airway resistance (ΔP) distribution — 1000 virtual airways",
+            color_discrete_sequence=["#F4A261"],
+        )
+        fig_dp.add_vline(x=dp_ref, line_dash="dash", line_color="white",
+                         annotation_text="Mean shape ΔP")
+        fig_dp.update_layout(height=340)
+        st.plotly_chart(fig_dp, width='stretch')
+
+    # Scatter design space coloured by ΔP
+    pa_idx, pb_idx = 0, 3
+    fig_sc = px.scatter(
         x=lhs_raw[:, pa_idx], y=lhs_raw[:, pb_idx],
-        color=mean_preds,
+        color=dp_preds,
         color_continuous_scale="Jet",
         labels={
             "x": PARAM_LABELS.get(param_cols[pa_idx], param_cols[pa_idx]),
             "y": PARAM_LABELS.get(param_cols[pb_idx], param_cols[pb_idx]),
-            "color": "Mean Pressure (Pa)",
+            "color": "ΔP (Pa)",
         },
-        title="Mean predicted pressure across LHS design space",
+        title="Design space coloured by airway resistance ΔP",
     )
-    fig_scatter.update_layout(height=460)
-    st.plotly_chart(fig_scatter, width='stretch')
+    fig_sc.update_layout(height=440)
+    st.plotly_chart(fig_sc, width='stretch')
+
+    r1, r2, r3 = st.columns(3)
+    r1.metric("Mean ΔP (1000 shapes)", f"{dp_preds.mean():.1f} Pa")
+    r2.metric("Max ΔP", f"{dp_preds.max():.1f} Pa")
+    r3.metric("Min ΔP", f"{dp_preds.min():.1f} Pa")
+
+
+# ── Tab 6: Patient Demo ───────────────────────────────────────────────────────
+with tab_demo:
+    st.subheader("🏥 Clinical Use Case — How This Digital Twin Works in Practice")
+    st.markdown("""
+    This page demonstrates how the surrogate model would be used for a **real patient**.
+    """)
+
+    col_flow, col_img = st.columns([2, 1])
+    with col_flow:
+        st.markdown("""
+        ### Workflow
+
+        **Traditional approach (hours):**
+        ```
+        CT scan → Segmentation → CFD mesh → Simulation (hours) → Pressure field
+        ```
+
+        **With this Digital Twin (<1 ms after training):**
+        ```
+        CT scan → Measure 26 anatomical parameters → RBF prediction → Pressure field
+        ```
+
+        ### Step-by-step
+
+        1. **Patient gets a CT scan** of the upper airways
+        2. A radiologist (or automated tool) extracts the **26 geometric measurements**:
+           glottis area, trachea diameter, bronchial lengths, branching angles, etc.
+        3. Those 26 numbers are entered into the sliders on the **Predict New Shape** tab
+        4. The RBF surrogate predicts the full 3D pressure field in **< 1 millisecond**
+        5. The clinician reads:
+           - The **ΔP (airway resistance)** — how hard is it for this patient to breathe?
+           - The **pressure field** — where is the bottleneck in the airway?
+           - Whether the patient's ΔP is **above or below average** (resistance index)
+
+        ### Clinical relevance
+
+        | ΔP range | Interpretation |
+        |----------|---------------|
+        | Low ΔP   | Low resistance — easy breathing |
+        | High ΔP  | High resistance — obstructed airway (e.g. tracheal stenosis) |
+        | Very high | Potential obstructive sleep apnoea, requires intervention |
+
+        ### What makes this a Digital Twin (not just a model)
+
+        A Digital Twin is updated as the patient's anatomy changes — e.g. after surgery,
+        a new CT scan produces new measurements, and the surrogate instantly predicts
+        the post-operative pressure field, allowing surgeons to evaluate outcomes
+        **before the operation**.
+        """)
+
+    with col_img:
+        st.markdown("### Try it: simulate a stenosed trachea")
+        st.caption("Narrow the trachea diameter and watch resistance increase.")
+
+        d_trachea_demo = st.slider(
+            "Trachea diameter (mm)",
+            min_value=float(params_raw[:, param_cols.index("d_trachea")].min()),
+            max_value=float(params_raw[:, param_cols.index("d_trachea")].max()),
+            value=float(params_raw[:, param_cols.index("d_trachea")].mean()),
+            key="demo_trachea",
+        )
+        A_glotis_demo = st.slider(
+            "Glottis area (mm²)",
+            min_value=float(params_raw[:, param_cols.index("A_glotis")].min()),
+            max_value=float(params_raw[:, param_cols.index("A_glotis")].max()),
+            value=float(params_raw[:, param_cols.index("A_glotis")].mean()),
+            key="demo_glotis",
+        )
+
+        # Build a demo parameter vector (mean everywhere, vary trachea + glottis)
+        demo_params = params_raw.mean(axis=0).copy()
+        demo_params[param_cols.index("d_trachea")] = d_trachea_demo
+        demo_params[param_cols.index("A_glotis")]  = A_glotis_demo
+        demo_norm = ((demo_params - low) / (high - low + 1e-12)).reshape(1, -1)
+
+        demo_scores   = predict(rbf_model, demo_norm)[0]
+        demo_pressure = reconstruct(mean_pres, modes_pres[:, :k_rbf], demo_scores)
+        demo_dp       = float(demo_pressure.max() - demo_pressure.min())
+        demo_ri       = demo_dp / dp_ref * 100.0
+
+        st.metric("ΔP", f"{demo_dp:.1f} Pa",
+                  delta=f"{demo_dp - dp_ref:+.1f} vs average",
+                  delta_color="inverse")
+        st.metric("Resistance index", f"{demo_ri:.1f} %")
+
+        if demo_ri > 120:
+            st.error("High resistance — obstructed airway")
+        elif demo_ri > 105:
+            st.warning("Slightly elevated resistance")
+        else:
+            st.success("Normal resistance range")

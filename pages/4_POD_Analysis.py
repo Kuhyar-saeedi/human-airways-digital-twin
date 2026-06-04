@@ -1,4 +1,4 @@
-﻿"""
+"""
 pages/4_POD_Analysis.py
 ========================
 POD (Proper Orthogonal Decomposition) analysis for both geometry and pressure.
@@ -39,6 +39,7 @@ from core.pod import (
     reconstruct,
     reconstruction_error,
 )
+from core.data_io import load_precomputed_pod
 
 st.set_page_config(page_title="POD Analysis", page_icon="📊", layout="wide")
 st.title("📊 POD Analysis — Dimensionality Reduction")
@@ -50,26 +51,33 @@ st.caption(
 # ── Load data ──────────────────────────────────────────────────────────────────
 doe_df = load_doe()
 
-with st.spinner("Loading geometry snapshots for POD…"):
-    X_geo = load_all_coords(STRIDE)
+_pre_g = load_precomputed_pod("geometry")
+_pre_p = load_precomputed_pod("pressure")
 
-with st.spinner("Loading pressure snapshots for POD…"):
+if _pre_g is not None:
+    mean_geo, modes_geo, scores_geo, sv_geo = (
+        _pre_g["mean"], _pre_g["modes"], _pre_g["scores"], _pre_g["svalues"]
+    )
+else:
+    with st.spinner("Loading geometry snapshots for POD…"):
+        X_geo = load_all_coords(STRIDE)
+    @st.cache_data(show_spinner=False)
+    def geo_pod(X): return compute_pod(X)
+    with st.spinner("Computing geometry POD…"):
+        mean_geo, modes_geo, scores_geo, sv_geo = geo_pod(X_geo)
+
+with st.spinner("Loading pressure snapshots…"):
     P_pres = load_all_pressures(STRIDE)
 
-# Cache POD computations
-@st.cache_data(show_spinner=False)
-def geo_pod(X):
-    return compute_pod(X)
-
-@st.cache_data(show_spinner=False)
-def pres_pod(P):
-    return compute_pod(P)
-
-with st.spinner("Computing geometry POD…"):
-    mean_geo,  modes_geo,  scores_geo,  sv_geo  = geo_pod(X_geo)
-
-with st.spinner("Computing pressure POD…"):
-    mean_pres, modes_pres, scores_pres, sv_pres = pres_pod(P_pres)
+if _pre_p is not None:
+    mean_pres, modes_pres, scores_pres, sv_pres = (
+        _pre_p["mean"], _pre_p["modes"], _pre_p["scores"], _pre_p["svalues"]
+    )
+else:
+    @st.cache_data(show_spinner=False)
+    def pres_pod(P): return compute_pod(P)
+    with st.spinner("Computing pressure POD…"):
+        mean_pres, modes_pres, scores_pres, sv_pres = pres_pod(P_pres)
 
 ref_coords = load_ref_coords(STRIDE)
 
@@ -290,10 +298,65 @@ with tab_v:
     fig_val.update_layout(height=400)
     st.plotly_chart(fig_val, width='stretch')
 
-    # Best k modes to achieve < 1% and < 5% error
     errs_arr = np.array(errs)
     k_1pct = next((k for k, e in zip(k_range, errs_arr) if e < 0.01), k_range[-1])
     k_5pct = next((k for k, e in zip(k_range, errs_arr) if e < 0.05), k_range[-1])
     v1, v2 = st.columns(2)
-    v1.metric("Modes for < 1 % error",  k_1pct)
-    v2.metric("Modes for < 5 % error",  k_5pct)
+    v1.metric("Modes for < 1 % error", k_1pct)
+    v2.metric("Modes for < 5 % error", k_5pct)
+
+    st.divider()
+    st.subheader("K-Fold Reconstruction Error")
+    st.caption(
+        "Splits the 100 snapshots into k folds, reconstructs each held-out fold "
+        "using POD trained on the remaining folds. Measures how well POD generalises."
+    )
+
+    kf_col1, kf_col2 = st.columns(2)
+    n_folds_pod = kf_col1.slider("Number of folds", 2, 10, 5, key="pod_kfold")
+    k_modes_kf  = kf_col2.slider("POD modes", 1, 30, 10, key="pod_kfold_k")
+
+    if st.button("Run K-Fold POD Reconstruction", key="pod_kfold_btn"):
+        with st.spinner(f"Running {n_folds_pod}-fold reconstruction validation…"):
+            rng = np.random.default_rng(42)
+            indices = rng.permutation(100)
+            folds   = np.array_split(indices, n_folds_pod)
+            fold_errs = []
+
+            for fold_idx, test_idx in enumerate(folds):
+                train_idx = np.concatenate([folds[j] for j in range(n_folds_pod)
+                                            if j != fold_idx])
+                P_train = P_pres[train_idx]
+                P_test  = P_pres[test_idx]
+
+                m_tr, modes_tr, scores_tr, _ = compute_pod(P_train)
+                # Project test snapshots onto train modes
+                test_scores = (P_test - m_tr) @ modes_tr[:, :k_modes_kf]
+                rec_test    = m_tr + test_scores @ modes_tr[:, :k_modes_kf].T
+                fold_rel_err = float(
+                    np.linalg.norm(P_test - rec_test) /
+                    (np.linalg.norm(P_test) + 1e-12)
+                )
+                fold_errs.append(fold_rel_err)
+
+        fold_df = pd.DataFrame({
+            "Fold":            [f"Fold {i+1}" for i in range(n_folds_pod)],
+            "Relative L2 error": fold_errs,
+        })
+        fig_kf_pod = px.bar(
+            fold_df, x="Fold", y="Relative L2 error",
+            color="Relative L2 error", color_continuous_scale="Blues",
+            text_auto=".4f",
+            title=f"{n_folds_pod}-Fold POD reconstruction error (k={k_modes_kf} modes)",
+        )
+        fig_kf_pod.update_layout(height=320)
+        st.plotly_chart(fig_kf_pod, width='stretch')
+
+        kf1, kf2, kf3 = st.columns(3)
+        kf1.metric("Mean fold error", f"{np.mean(fold_errs)*100:.3f} %")
+        kf2.metric("Worst fold",      f"{np.max(fold_errs)*100:.3f} %")
+        kf3.metric("Best fold",       f"{np.min(fold_errs)*100:.3f} %")
+        st.caption(
+            "A consistent error across folds means POD generalises well. "
+            "A high worst-fold error suggests some snapshots are outliers."
+        )
