@@ -123,36 +123,113 @@ def geometry_viewer(n_sliders, mean_geo, modes_geo, scores_geo, svals_geo, std_d
         dev = float(np.linalg.norm(coeffs[:n_sliders]))
         st.metric("Shape deviation ‖c‖", f"{dev:.3f}")
 
+        st.divider()
+        st.markdown("**Visualisation**")
+        color_by = st.radio(
+            "Colour by",
+            ["Displacement from mean", "Mode contribution", "Z-coordinate", "Uniform"],
+            key="geo_color_mode",
+        )
+        show_mean_ghost = st.checkbox("Show mean shape (ghost)", value=False,
+                                      key="geo_ghost")
+
         st.markdown("**Active coefficients**")
         coeff_df = pd.DataFrame({
             "Mode": [f"M{i+1}" for i in range(n_sliders)],
             "σᵢ":   [f"{std_devs[i]:.3g}" for i in range(n_sliders)],
             "cᵢ":   [f"{coeffs[i]:.3g}"   for i in range(n_sliders)],
         })
-        st.dataframe(coeff_df, hide_index=True, height=200)
+        st.dataframe(coeff_df, hide_index=True, height=180)
 
     with view_col:
-        rec_coords = reconstruct(mean_geo, modes_geo, coeffs).reshape(-1, 3)
+        rec_coords  = reconstruct(mean_geo, modes_geo, coeffs).reshape(-1, 3)
+        mean_coords = mean_geo.reshape(-1, 3)
 
-        fig3d = go.Figure(
-            go.Scatter3d(
-                x=rec_coords[:, 0], y=rec_coords[:, 1], z=rec_coords[:, 2],
-                mode="markers",
-                marker=dict(size=1.5, color="#4EB3D3", opacity=0.55),
-                hoverinfo="skip",
-            )
+        # ── Choose colour array ───────────────────────────────────────────
+        if color_by == "Displacement from mean":
+            disp  = np.linalg.norm(rec_coords - mean_coords, axis=1)
+            c_arr = disp
+            cscale = "Hot"
+            cbar   = dict(title="Displacement (m)", thickness=12)
+            cbar_show = True
+        elif color_by == "Mode contribution":
+            # Show which mode has the largest absolute contribution at each point
+            active = [i for i in range(n_sliders) if abs(coeffs[i]) > 1e-9]
+            if active:
+                # Weighted sum of mode spatial patterns
+                mode_contrib = sum(
+                    abs(coeffs[i]) * np.linalg.norm(
+                        modes_geo[:, i].reshape(-1, 3), axis=1
+                    )
+                    for i in active
+                )
+                c_arr = mode_contrib
+            else:
+                c_arr = np.zeros(len(rec_coords))
+            cscale = "Plasma"
+            cbar   = dict(title="Mode influence", thickness=12)
+            cbar_show = True
+        elif color_by == "Z-coordinate":
+            c_arr  = rec_coords[:, 2]
+            cscale = "Viridis"
+            cbar   = dict(title="Z (m)", thickness=12)
+            cbar_show = True
+        else:
+            c_arr  = "#4EB3D3"
+            cscale = None
+            cbar   = None
+            cbar_show = False
+
+        # ── Build figure ──────────────────────────────────────────────────
+        scene_cfg = dict(
+            xaxis_title="X (m)", yaxis_title="Y (m)", zaxis_title="Z (m)",
+            aspectmode="data", bgcolor="rgb(15,17,25)",
+            xaxis=dict(gridcolor="#333", showbackground=True, backgroundcolor="rgb(15,17,25)"),
+            yaxis=dict(gridcolor="#333", showbackground=True, backgroundcolor="rgb(15,17,25)"),
+            zaxis=dict(gridcolor="#333", showbackground=True, backgroundcolor="rgb(15,17,25)"),
         )
+
+        traces = []
+
+        # Optional mean-shape ghost
+        if show_mean_ghost:
+            traces.append(go.Scatter3d(
+                x=mean_coords[:, 0], y=mean_coords[:, 1], z=mean_coords[:, 2],
+                mode="markers",
+                marker=dict(size=1.2, color="rgba(150,150,150,0.18)"),
+                hoverinfo="skip",
+                name="Mean shape",
+                showlegend=True,
+            ))
+
+        # Deformed shape
+        marker_cfg = dict(size=1.8, opacity=0.75)
+        if cbar_show:
+            marker_cfg.update(
+                color=c_arr, colorscale=cscale,
+                colorbar=cbar,
+                cmin=float(np.min(c_arr)) if not isinstance(c_arr, str) else None,
+                cmax=float(np.max(c_arr)) if not isinstance(c_arr, str) else None,
+            )
+        else:
+            marker_cfg["color"] = c_arr
+
+        traces.append(go.Scatter3d(
+            x=rec_coords[:, 0], y=rec_coords[:, 1], z=rec_coords[:, 2],
+            mode="markers",
+            marker=marker_cfg,
+            hoverinfo="skip",
+            name="Deformed shape",
+            showlegend=show_mean_ghost,
+        ))
+
+        fig3d = go.Figure(data=traces)
         fig3d.update_layout(
-            scene=dict(
-                xaxis_title="X (m)", yaxis_title="Y (m)", zaxis_title="Z (m)",
-                aspectmode="data", bgcolor="rgb(15,17,25)",
-                xaxis=dict(gridcolor="#333", showbackground=True, backgroundcolor="rgb(15,17,25)"),
-                yaxis=dict(gridcolor="#333", showbackground=True, backgroundcolor="rgb(15,17,25)"),
-                zaxis=dict(gridcolor="#333", showbackground=True, backgroundcolor="rgb(15,17,25)"),
-            ),
+            scene=scene_cfg,
             paper_bgcolor="rgb(15,17,25)", font=dict(color="white"),
-            height=560, margin=dict(l=0, r=0, b=0, t=30),
-            title="Reconstructed Airway Geometry",
+            height=580, margin=dict(l=0, r=0, b=0, t=30),
+            title=f"Geometry — coloured by {color_by}",
+            legend=dict(x=0.01, y=0.99, font=dict(size=10)),
         )
         st.plotly_chart(fig3d, width='stretch', key="geo_3d_plot")
 
