@@ -1,13 +1,8 @@
-﻿"""
+"""
 pages/8_Animations.py
 =====================
-Animated visualisations to build intuition about the POD decomposition.
-
-Animations
-----------
-1. Mode Sweep  — morph the airway geometry from -3σ to +3σ along a chosen mode
-2. Snapshot Reel — play through all 100 pressure field snapshots as a movie
-3. Pressure Mode — animate the pressure field along a POD mode axis
+Animated POD visualisations — geometry mode sweeps and pressure snapshot reel.
+Animations are generated on demand (button click) to stay within cloud memory limits.
 """
 
 import sys
@@ -20,60 +15,44 @@ import streamlit as st
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core.data_io import (
-    STRIDE, load_all_coords, load_all_pressures,
-    load_ref_coords, load_precomputed_pod,
+    STRIDE, load_all_pressures, load_ref_coords, load_precomputed_pod,
 )
-from core.pod import compute_pod, modes_for_energy, reconstruct
+from core.pod import compute_pod, cumulative_energy, modes_for_energy, reconstruct
 
 st.set_page_config(page_title="Animations", page_icon="🎬", layout="wide")
 st.title("🎬 Animated POD Visualisations")
 st.caption(
-    "Watch the airway geometry and pressure field morph as you sweep through POD modes. "
-    "Use the play button in the chart footer."
+    "Animations are built on demand — configure the options then click **Generate**. "
+    "Use the ▶ Play button inside each chart."
 )
 
-# ── Load data ─────────────────────────────────────────────────────────────────
+# ── Load data (lightweight — only precomputed NPZ files) ──────────────────────
 
 _pre_g = load_precomputed_pod("geometry")
 _pre_p = load_precomputed_pod("pressure")
 
-with st.spinner("Loading geometry data…"):
-    if _pre_g:
-        mean_geo   = _pre_g["mean"]
-        modes_geo  = _pre_g["modes"]
-        scores_geo = _pre_g["scores"]
-        svals_geo  = _pre_g["svalues"]
-    else:
-        X_geo = load_all_coords(STRIDE)
-        @st.cache_data(show_spinner=False)
-        def _geo_pod(X): return compute_pod(X)
-        mean_geo, modes_geo, scores_geo, svals_geo = _geo_pod(X_geo)
+if _pre_g is None or _pre_p is None:
+    st.error("Precomputed POD files not found. Run `scripts/precompute.py --pod-only` first.")
+    st.stop()
 
-with st.spinner("Loading pressure data…"):
-    if _pre_p:
-        mean_pres   = _pre_p["mean"]
-        modes_pres  = _pre_p["modes"]
-        scores_pres = _pre_p["scores"]
-        svals_pres  = _pre_p["svalues"]
-    else:
-        P_all = load_all_pressures(STRIDE)
-        @st.cache_data(show_spinner=False)
-        def _pres_pod(P): return compute_pod(P)
-        mean_pres, modes_pres, scores_pres, svals_pres = _pres_pod(P_all)
+mean_geo   = _pre_g["mean"]
+modes_geo  = _pre_g["modes"]
+scores_geo = _pre_g["scores"]
+svals_geo  = _pre_g["svalues"]
+
+mean_pres   = _pre_p["mean"]
+modes_pres  = _pre_p["modes"]
+scores_pres = _pre_p["scores"]
+svals_pres  = _pre_p["svalues"]
 
 ref_coords = load_ref_coords(STRIDE)
 std_geo    = svals_geo  / np.sqrt(max(len(scores_geo)  - 1, 1))
 std_pres   = svals_pres / np.sqrt(max(len(scores_pres) - 1, 1))
+energy_geo = cumulative_energy(svals_geo)
 
-# ── Tabs ──────────────────────────────────────────────────────────────────────
-tab_sweep, tab_reel, tab_pmode = st.tabs([
-    "🔬 Geometry Mode Sweep",
-    "🎞️ Pressure Snapshot Reel",
-    "💨 Pressure Mode Sweep",
-])
+# ── Shared layout builder ─────────────────────────────────────────────────────
 
-
-def make_animation_layout(title: str, height: int = 620) -> dict:
+def anim_layout(title: str, n_frames: int, frame_labels: list, height: int = 600) -> dict:
     return dict(
         scene=dict(
             aspectmode="data", bgcolor="rgb(12,14,20)",
@@ -86,249 +65,210 @@ def make_animation_layout(title: str, height: int = 620) -> dict:
         title=title,
         updatemenus=[dict(
             type="buttons", showactive=False,
-            y=0, x=0.5, xanchor="center", yanchor="top",
-            pad=dict(t=10),
+            y=0, x=0.5, xanchor="center", yanchor="top", pad=dict(t=10),
             buttons=[
-                dict(label="▶ Play",
-                     method="animate",
-                     args=[None, dict(frame=dict(duration=80, redraw=True),
+                dict(label="▶ Play",  method="animate",
+                     args=[None, dict(frame=dict(duration=100, redraw=True),
                                       fromcurrent=True, mode="immediate")]),
-                dict(label="⏸ Pause",
-                     method="animate",
+                dict(label="⏸ Pause", method="animate",
                      args=[[None], dict(frame=dict(duration=0, redraw=False),
                                         mode="immediate")]),
             ],
         )],
         sliders=[dict(
-            steps=[dict(method="animate", args=[[f"frame{k}"],
-                   dict(mode="immediate", frame=dict(duration=80, redraw=True))],
-                   label=str(k)) for k in range(0)],  # filled per animation
-            transition=dict(duration=0),
-            x=0, y=0, currentvalue=dict(visible=False),
+            steps=[dict(method="animate",
+                        args=[[f"f{k}"], dict(mode="immediate",
+                               frame=dict(duration=100, redraw=True))],
+                        label=frame_labels[k])
+                   for k in range(n_frames)],
+            transition=dict(duration=0), x=0, y=0,
+            currentvalue=dict(visible=True, prefix="Frame: ", font=dict(color="#aaa")),
             len=1.0,
         )],
     )
 
 
-# ── Tab 1: Geometry Mode Sweep ─────────────────────────────────────────────────
-with tab_sweep:
+# ── Tabs ──────────────────────────────────────────────────────────────────────
+tab_geo, tab_reel, tab_pres = st.tabs([
+    "🔬 Geometry Mode Sweep",
+    "🎞️ Pressure Snapshot Reel",
+    "💨 Pressure Mode Sweep",
+])
+
+
+# ── Tab 1: Geometry mode sweep ────────────────────────────────────────────────
+with tab_geo:
     st.subheader("Airway Geometry — POD Mode Sweep")
+    st.caption("Morphs the airway from −3σ to +3σ along one POD mode.")
 
-    col_ctl, _ = st.columns([1, 3])
-    with col_ctl:
-        mode_idx = st.slider("POD Mode to animate", 1, min(10, len(svals_geo)), 1,
-                             key="anim_geo_mode") - 1
-        n_frames = st.slider("Number of frames", 20, 60, 30, key="anim_geo_frames")
-        sigma_range = st.slider("σ range (±)", 1.0, 4.0, 3.0, step=0.5, key="anim_geo_sigma")
+    c1, c2, c3 = st.columns(3)
+    mode_idx     = c1.slider("POD Mode", 1, min(10, len(svals_geo)), 1, key="g_mode") - 1
+    n_frames_g   = c2.slider("Frames", 10, 25, 16, key="g_frames")
+    sigma_range  = c3.slider("σ range", 1.0, 4.0, 3.0, step=0.5, key="g_sigma")
 
-    sigma = float(std_geo[mode_idx])
-    alpha_vals = np.linspace(-sigma_range * sigma, sigma_range * sigma, n_frames)
+    ep = float(svals_geo[mode_idx]**2 / (svals_geo**2).sum() * 100)
+    st.info(f"Mode {mode_idx+1} captures **{ep:.1f}%** of geometry variance  |  "
+            f"σ = {std_geo[mode_idx]:.4g} m")
 
-    @st.cache_data(show_spinner=False)
-    def build_geo_sweep(mode_idx, n_frames, sigma_range, mean_g, modes_g, svals_g):
-        std = svals_g / np.sqrt(max(99, 1))
-        sigma = float(std[mode_idx])
-        alphas = np.linspace(-sigma_range * sigma, sigma_range * sigma, n_frames)
-        frames = []
-        for alpha in alphas:
-            coeffs = np.zeros(modes_g.shape[1])
-            coeffs[mode_idx] = alpha
-            rec = reconstruct(mean_g, modes_g, coeffs).reshape(-1, 3)
-            frames.append(rec)
-        return frames, alphas
+    if st.button("Generate Geometry Animation", type="primary", key="gen_geo"):
+        sigma  = float(std_geo[mode_idx])
+        alphas = np.linspace(-sigma_range * sigma, sigma_range * sigma, n_frames_g)
 
-    with st.spinner("Building geometry animation frames…"):
-        geo_frames, alphas = build_geo_sweep(
-            mode_idx, n_frames, sigma_range, mean_geo, modes_geo, svals_geo
-        )
+        with st.spinner(f"Building {n_frames_g} frames…"):
+            frames = []
+            for k, alpha in enumerate(alphas):
+                c = np.zeros(modes_geo.shape[1])
+                c[mode_idx] = alpha
+                rec = reconstruct(mean_geo, modes_geo, c).reshape(-1, 3)
+                frames.append(go.Frame(
+                    data=[go.Scatter3d(
+                        x=rec[:, 0], y=rec[:, 1], z=rec[:, 2],
+                        mode="markers",
+                        marker=dict(size=1.5, color="#4EB3D3", opacity=0.55),
+                        hoverinfo="skip",
+                    )],
+                    name=f"f{k}",
+                ))
 
-    plotly_frames = []
-    for k, rec in enumerate(geo_frames):
-        plotly_frames.append(go.Frame(
+        rec0 = reconstruct(mean_geo, modes_geo, np.zeros(modes_geo.shape[1])).reshape(-1, 3)
+        fig = go.Figure(
             data=[go.Scatter3d(
-                x=rec[:, 0], y=rec[:, 1], z=rec[:, 2],
+                x=rec0[:, 0], y=rec0[:, 1], z=rec0[:, 2],
                 mode="markers",
                 marker=dict(size=1.5, color="#4EB3D3", opacity=0.55),
                 hoverinfo="skip",
             )],
-            name=f"frame{k}",
-        ))
-
-    fig_sweep = go.Figure(
-        data=[go.Scatter3d(
-            x=geo_frames[0][:, 0], y=geo_frames[0][:, 1], z=geo_frames[0][:, 2],
-            mode="markers",
-            marker=dict(size=1.5, color="#4EB3D3", opacity=0.55),
-            hoverinfo="skip",
-        )],
-        frames=plotly_frames,
-    )
-    layout = make_animation_layout(f"Geometry Mode {mode_idx+1} Sweep (±{sigma_range}σ)")
-    layout["sliders"][0]["steps"] = [
-        dict(method="animate",
-             args=[[f"frame{k}"], dict(mode="immediate", frame=dict(duration=80, redraw=True))],
-             label=f"{alphas[k]/sigma:.1f}σ")
-        for k in range(n_frames)
-    ]
-    fig_sweep.update_layout(**layout)
-    st.plotly_chart(fig_sweep, width='stretch', key="fig_geo_sweep")
-
-    e_pct = float(
-        svals_geo[mode_idx]**2 / (svals_geo**2).sum() * 100
-    )
-    st.info(f"Mode {mode_idx+1} captures **{e_pct:.1f}%** of total geometry variance.  "
-            f"σ = {sigma:.4g} m  |  range = ±{sigma_range*sigma:.4g} m")
-
-
-# ── Tab 2: Pressure Snapshot Reel ─────────────────────────────────────────────
-with tab_reel:
-    st.subheader("Play through all 100 pressure field snapshots")
-
-    col_ctl2, _ = st.columns([1, 3])
-    with col_ctl2:
-        frame_step = st.slider("Step (every N snapshots)", 1, 5, 1, key="reel_step")
-
-    snap_indices = list(range(0, 100, frame_step))
-
-    @st.cache_data(show_spinner=False)
-    def build_pressure_reel(snap_indices, mean_p, modes_p, scores_p):
-        fields = []
-        for idx in snap_indices:
-            from core.pod import reconstruct as _rec
-            field = _rec(mean_p, modes_p, scores_p[idx])
-            fields.append(field)
-        return fields
-
-    with st.spinner("Building pressure reel…"):
-        pressure_fields = build_pressure_reel(snap_indices, mean_pres, modes_pres, scores_pres)
-
-    p_global_min = min(f.min() for f in pressure_fields)
-    p_global_max = max(f.max() for f in pressure_fields)
-
-    reel_frames = []
-    for k, (idx, field) in enumerate(zip(snap_indices, pressure_fields)):
-        reel_frames.append(go.Frame(
-            data=[go.Scatter3d(
-                x=ref_coords[:, 0], y=ref_coords[:, 1], z=ref_coords[:, 2],
-                mode="markers",
-                marker=dict(
-                    size=2, color=field.tolist(),
-                    colorscale="Jet",
-                    cmin=p_global_min, cmax=p_global_max,
-                    opacity=0.65,
-                ),
-                hoverinfo="skip",
-            )],
-            name=f"reel{k}",
-        ))
-
-    fig_reel = go.Figure(
-        data=[go.Scatter3d(
-            x=ref_coords[:, 0], y=ref_coords[:, 1], z=ref_coords[:, 2],
-            mode="markers",
-            marker=dict(
-                size=2, color=pressure_fields[0].tolist(),
-                colorscale="Jet",
-                cmin=p_global_min, cmax=p_global_max,
-                colorbar=dict(title="P (Pa)", thickness=14),
-                opacity=0.65,
-            ),
-            hoverinfo="skip",
-        )],
-        frames=reel_frames,
-    )
-    reel_layout = make_animation_layout("Pressure Field — DOE Snapshot Reel")
-    reel_layout["sliders"][0]["steps"] = [
-        dict(method="animate",
-             args=[[f"reel{k}"], dict(mode="immediate", frame=dict(duration=100, redraw=True))],
-             label=f"Run {snap_indices[k]+1}")
-        for k in range(len(snap_indices))
-    ]
-    fig_reel.update_layout(**reel_layout)
-    st.plotly_chart(fig_reel, width='stretch', key="fig_reel")
-
-    st.caption(f"Showing {len(snap_indices)} frames  |  global P range: {p_global_min:.0f} – {p_global_max:.0f} Pa")
-
-
-# ── Tab 3: Pressure Mode Sweep ─────────────────────────────────────────────────
-with tab_pmode:
-    st.subheader("Pressure Field — POD Mode Sweep")
-    st.markdown(
-        "Animates the pressure field by sweeping a single POD mode coefficient "
-        "from −3σ to +3σ, holding all others at zero (= mean pressure field)."
-    )
-
-    col_ctl3, _ = st.columns([1, 3])
-    with col_ctl3:
-        pmode_idx   = st.slider("Pressure POD Mode", 1, min(10, len(svals_pres)), 1,
-                                key="anim_pmode") - 1
-        n_frames_p  = st.slider("Frames", 20, 60, 30, key="anim_pframes")
-        sigma_range_p = st.slider("σ range (±)", 1.0, 4.0, 3.0, step=0.5, key="anim_psigma")
-
-    sigma_p  = float(std_pres[pmode_idx])
-    alphas_p = np.linspace(-sigma_range_p * sigma_p, sigma_range_p * sigma_p, n_frames_p)
-
-    @st.cache_data(show_spinner=False)
-    def build_pressure_sweep(pmode_idx, n_frames, sigma_range, mean_p, modes_p, svals_p):
-        std = svals_p / np.sqrt(max(99, 1))
-        sigma = float(std[pmode_idx])
-        alphas = np.linspace(-sigma_range * sigma, sigma_range * sigma, n_frames)
-        fields = []
-        for alpha in alphas:
-            coeffs = np.zeros(modes_p.shape[1])
-            coeffs[pmode_idx] = alpha
-            fields.append(mean_p + modes_p @ coeffs)
-        return fields, alphas
-
-    with st.spinner("Building pressure mode animation…"):
-        p_sweep_fields, alphas_p = build_pressure_sweep(
-            pmode_idx, n_frames_p, sigma_range_p, mean_pres, modes_pres, svals_pres
+            frames=frames,
         )
+        labels = [f"{a/float(std_geo[mode_idx]):.1f}σ" for a in alphas]
+        fig.update_layout(**anim_layout(
+            f"Geometry Mode {mode_idx+1} Sweep (±{sigma_range}σ)",
+            n_frames_g, labels,
+        ))
+        st.plotly_chart(fig, width="stretch", key="fig_geo")
 
-    p_sweep_min = min(f.min() for f in p_sweep_fields)
-    p_sweep_max = max(f.max() for f in p_sweep_fields)
 
-    pmode_frames = []
-    for k, field in enumerate(p_sweep_fields):
-        pmode_frames.append(go.Frame(
+# ── Tab 2: Pressure snapshot reel ────────────────────────────────────────────
+with tab_reel:
+    st.subheader("Pressure Field — DOE Snapshot Reel")
+    st.caption("Steps through all 100 CFD snapshots.")
+
+    c1, c2 = st.columns(2)
+    step       = c1.slider("Show every N-th snapshot", 1, 5, 2, key="reel_step")
+    cmap_reel  = c2.selectbox("Colour map", ["Jet","Viridis","Plasma","Turbo"], key="reel_cmap")
+
+    snap_indices = list(range(0, 100, step))
+    st.info(f"{len(snap_indices)} frames  ·  ~{len(snap_indices)*42}K points total")
+
+    if st.button("Generate Snapshot Reel", type="primary", key="gen_reel"):
+        with st.spinner("Loading pressure fields…"):
+            P_all = load_all_pressures(STRIDE)
+
+        p_min = float(P_all.min())
+        p_max = float(P_all.max())
+
+        with st.spinner(f"Building {len(snap_indices)} frames…"):
+            frames = []
+            for k, idx in enumerate(snap_indices):
+                frames.append(go.Frame(
+                    data=[go.Scatter3d(
+                        x=ref_coords[:, 0], y=ref_coords[:, 1], z=ref_coords[:, 2],
+                        mode="markers",
+                        marker=dict(
+                            size=2, color=P_all[idx].tolist(),
+                            colorscale=cmap_reel,
+                            cmin=p_min, cmax=p_max, opacity=0.65,
+                        ),
+                        hoverinfo="skip",
+                    )],
+                    name=f"f{k}",
+                ))
+
+        fig = go.Figure(
             data=[go.Scatter3d(
                 x=ref_coords[:, 0], y=ref_coords[:, 1], z=ref_coords[:, 2],
                 mode="markers",
                 marker=dict(
-                    size=2, color=field.tolist(),
-                    colorscale="Jet",
-                    cmin=p_sweep_min, cmax=p_sweep_max,
+                    size=2, color=P_all[snap_indices[0]].tolist(),
+                    colorscale=cmap_reel, cmin=p_min, cmax=p_max,
+                    colorbar=dict(title="P (Pa)", thickness=12),
                     opacity=0.65,
                 ),
                 hoverinfo="skip",
             )],
-            name=f"pm{k}",
+            frames=frames,
+        )
+        labels = [f"Run {snap_indices[k]+1}" for k in range(len(snap_indices))]
+        fig.update_layout(**anim_layout(
+            "Static Pressure — DOE Snapshot Reel",
+            len(snap_indices), labels,
         ))
+        st.plotly_chart(fig, width="stretch", key="fig_reel")
+        st.caption(f"Global pressure range: {p_min:.0f} – {p_max:.0f} Pa")
 
-    fig_pmode = go.Figure(
-        data=[go.Scatter3d(
-            x=ref_coords[:, 0], y=ref_coords[:, 1], z=ref_coords[:, 2],
-            mode="markers",
-            marker=dict(
-                size=2, color=p_sweep_fields[0].tolist(),
-                colorscale="Jet",
-                cmin=p_sweep_min, cmax=p_sweep_max,
-                colorbar=dict(title="P (Pa)", thickness=14),
-                opacity=0.65,
-            ),
-            hoverinfo="skip",
-        )],
-        frames=pmode_frames,
-    )
-    pmode_layout = make_animation_layout(f"Pressure POD Mode {pmode_idx+1} Sweep (±{sigma_range_p}σ)")
-    pmode_layout["sliders"][0]["steps"] = [
-        dict(method="animate",
-             args=[[f"pm{k}"], dict(mode="immediate", frame=dict(duration=80, redraw=True))],
-             label=f"{alphas_p[k]/sigma_p:.1f}σ")
-        for k in range(n_frames_p)
-    ]
-    fig_pmode.update_layout(**pmode_layout)
-    st.plotly_chart(fig_pmode, width='stretch', key="fig_pmode")
 
-    ep_pct = float(svals_pres[pmode_idx]**2 / (svals_pres**2).sum() * 100)
-    st.info(f"Pressure Mode {pmode_idx+1} captures **{ep_pct:.1f}%** of total pressure variance.")
+# ── Tab 3: Pressure mode sweep ────────────────────────────────────────────────
+with tab_pres:
+    st.subheader("Pressure Field — POD Mode Sweep")
+    st.caption("Animates the pressure field by sweeping one POD mode from −3σ to +3σ.")
+
+    c1, c2, c3 = st.columns(3)
+    pmode_idx    = c1.slider("Pressure Mode", 1, min(10, len(svals_pres)), 1, key="p_mode") - 1
+    n_frames_p   = c2.slider("Frames", 10, 25, 16, key="p_frames")
+    sigma_range_p= c3.slider("σ range", 1.0, 4.0, 3.0, step=0.5, key="p_sigma")
+    cmap_pmode   = st.selectbox("Colour map", ["Jet","Viridis","Plasma","Turbo"], key="p_cmap")
+
+    ep2 = float(svals_pres[pmode_idx]**2 / (svals_pres**2).sum() * 100)
+    st.info(f"Pressure Mode {pmode_idx+1} captures **{ep2:.1f}%** of pressure variance")
+
+    if st.button("Generate Pressure Animation", type="primary", key="gen_pres"):
+        sigma_p = float(std_pres[pmode_idx])
+        alphas_p = np.linspace(-sigma_range_p * sigma_p, sigma_range_p * sigma_p, n_frames_p)
+
+        with st.spinner(f"Building {n_frames_p} frames…"):
+            fields = []
+            for alpha in alphas_p:
+                c = np.zeros(modes_pres.shape[1])
+                c[pmode_idx] = alpha
+                fields.append(mean_pres + modes_pres @ c)
+
+        p_min2 = min(f.min() for f in fields)
+        p_max2 = max(f.max() for f in fields)
+
+        frames = [
+            go.Frame(
+                data=[go.Scatter3d(
+                    x=ref_coords[:, 0], y=ref_coords[:, 1], z=ref_coords[:, 2],
+                    mode="markers",
+                    marker=dict(
+                        size=2, color=f.tolist(),
+                        colorscale=cmap_pmode,
+                        cmin=p_min2, cmax=p_max2, opacity=0.65,
+                    ),
+                    hoverinfo="skip",
+                )],
+                name=f"f{k}",
+            )
+            for k, f in enumerate(fields)
+        ]
+
+        fig = go.Figure(
+            data=[go.Scatter3d(
+                x=ref_coords[:, 0], y=ref_coords[:, 1], z=ref_coords[:, 2],
+                mode="markers",
+                marker=dict(
+                    size=2, color=fields[0].tolist(),
+                    colorscale=cmap_pmode, cmin=p_min2, cmax=p_max2,
+                    colorbar=dict(title="P (Pa)", thickness=12),
+                    opacity=0.65,
+                ),
+                hoverinfo="skip",
+            )],
+            frames=frames,
+        )
+        labels = [f"{a/sigma_p:.1f}σ" for a in alphas_p]
+        fig.update_layout(**anim_layout(
+            f"Pressure Mode {pmode_idx+1} Sweep (±{sigma_range_p}σ)",
+            n_frames_p, labels,
+        ))
+        st.plotly_chart(fig, width="stretch", key="fig_pmode")
