@@ -22,11 +22,13 @@ from core.data_io import (
     get_param_cols, load_precomputed_pod,
 )
 from core.pod import compute_pod, cumulative_energy, modes_for_energy, reconstruct
+from core.i18n import t, lang_selector
 
 st.set_page_config(page_title="Geometry Explorer", page_icon="🔬", layout="wide")
+lang_selector()
 
-st.title("🔬 Geometry Explorer — POD Shape Morphing")
-st.caption("Adjust mode sliders to morph the airway geometry in real time.")
+st.title(t("geo_title"))
+st.caption(t("geo_caption"))
 
 # ── Data loading (runs once, cached) ──────────────────────────────────────────
 
@@ -55,12 +57,12 @@ std_devs = svals_geo / np.sqrt(max(len(scores_geo) - 1, 1))
 
 # Static sidebar — no interactive widgets, just info
 with st.sidebar:
-    st.header("Geometry Explorer")
-    st.metric("Modes for 95 %", n95)
-    st.metric("Modes for 99 %", n99)
-    st.metric("Total modes", len(svals_geo))
+    st.header(t("geo_title")[:20])
+    st.metric(t("geo_modes_95"), n95)
+    st.metric(t("geo_modes_99"), n99)
+    st.metric(t("geo_total_modes"), len(svals_geo))
     st.divider()
-    st.caption("Controls are in the main panel on the left.")
+    st.caption(t("geo_caption"))
 
 # ── Fragment: everything interactive lives here ───────────────────────────────
 
@@ -74,15 +76,15 @@ def geometry_viewer(n_sliders, mean_geo, modes_geo, scores_geo, svals_geo, std_d
     ctrl_col, view_col = st.columns([1, 3], gap="medium")
 
     with ctrl_col:
-        st.markdown("**Controls**")
+        st.markdown(t("geo_controls"))
 
         b1, b2 = st.columns(2)
-        if b1.button("Reset to Mean", key="btn_reset", width='stretch'):
+        if b1.button(t("btn_reset"), key="btn_reset", width='stretch'):
             for i in range(n_sliders):
                 st.session_state[f"geo_mode_{i}"] = 0.0
             st.rerun(scope="fragment")
 
-        if b2.button("Random Shape", key="btn_random", width='stretch'):
+        if b2.button(t("btn_random"), key="btn_random", width='stretch'):
             rng = np.random.default_rng()
             for i in range(n_sliders):
                 st.session_state[f"geo_mode_{i}"] = float(
@@ -90,19 +92,22 @@ def geometry_viewer(n_sliders, mean_geo, modes_geo, scores_geo, svals_geo, std_d
                 )
             st.rerun(scope="fragment")
 
-        snap_pick = st.selectbox(
-            "Load snapshot",
-            ["— choose —"] + [f"Run {i}" for i in range(1, 101)],
+        def _load_snapshot():
+            val = st.session_state["snap_pick_geo"]
+            if val != t("geo_choose"):
+                idx = int(val.split()[1]) - 1
+                for i in range(n_sliders):
+                    st.session_state[f"geo_mode_{i}"] = float(scores_geo[idx, i])
+
+        st.selectbox(
+            t("geo_load_snap"),
+            [t("geo_choose")] + [f"Run {i}" for i in range(1, 101)],
             key="snap_pick_geo",
+            on_change=_load_snapshot,
         )
-        if snap_pick != "— choose —":
-            idx = int(snap_pick.split()[1]) - 1
-            for i in range(n_sliders):
-                st.session_state[f"geo_mode_{i}"] = float(scores_geo[idx, i])
-            st.rerun(scope="fragment")
 
         st.divider()
-        st.markdown("**POD Mode Sliders**")
+        st.markdown(t("geo_pod_sliders"))
 
         coeffs = np.zeros(len(svals_geo))
         for i in range(n_sliders):
@@ -114,26 +119,21 @@ def geometry_viewer(n_sliders, mean_geo, modes_geo, scores_geo, svals_geo, std_d
                 f"Mode {i+1}  ({ep:.1f}%)",
                 min_value=float(-3.0 * std_devs[i]),
                 max_value=float( 3.0 * std_devs[i]),
-                value=float(st.session_state[f"geo_mode_{i}"]),
                 step=float(std_devs[i] / 30),
                 key=f"geo_mode_{i}",
                 format="%.3f",
             )
 
         dev = float(np.linalg.norm(coeffs[:n_sliders]))
-        st.metric("Shape deviation ‖c‖", f"{dev:.3f}")
+        st.metric(t("geo_deviation"), f"{dev:.3f}")
 
         st.divider()
-        st.markdown("**Visualisation**")
-        color_by = st.radio(
-            "Colour by",
-            ["Displacement from mean", "Mode contribution", "Z-coordinate", "Uniform"],
-            key="geo_color_mode",
-        )
-        show_mean_ghost = st.checkbox("Show mean shape (ghost)", value=False,
-                                      key="geo_ghost")
+        st.markdown(t("geo_visualisation"))
+        _color_opts = [t("geo_disp_mean"), t("geo_mode_contrib"), t("geo_z_coord"), t("geo_uniform")]
+        color_by = st.radio(t("lbl_colour_by"), _color_opts, key="geo_color_mode")
+        show_mean_ghost = st.checkbox(t("geo_show_ghost"), value=False, key="geo_ghost")
 
-        st.markdown("**Active coefficients**")
+        st.markdown(t("geo_active_coeff"))
         coeff_df = pd.DataFrame({
             "Mode": [f"M{i+1}" for i in range(n_sliders)],
             "σᵢ":   [f"{std_devs[i]:.3g}" for i in range(n_sliders)],
@@ -152,7 +152,7 @@ def geometry_viewer(n_sliders, mean_geo, modes_geo, scores_geo, svals_geo, std_d
             cscale = "Hot"
             cbar   = dict(title="Displacement (m)", thickness=12)
             cbar_show = True
-        elif color_by == "Mode contribution":
+        elif color_by == t("geo_mode_contrib"):
             # Show which mode has the largest absolute contribution at each point
             active = [i for i in range(n_sliders) if abs(coeffs[i]) > 1e-9]
             if active:
@@ -169,7 +169,7 @@ def geometry_viewer(n_sliders, mean_geo, modes_geo, scores_geo, svals_geo, std_d
             cscale = "Plasma"
             cbar   = dict(title="Mode influence", thickness=12)
             cbar_show = True
-        elif color_by == "Z-coordinate":
+        elif color_by == t("geo_z_coord"):
             c_arr  = rec_coords[:, 2]
             cscale = "Viridis"
             cbar   = dict(title="Z (m)", thickness=12)
@@ -238,7 +238,7 @@ def geometry_viewer(n_sliders, mean_geo, modes_geo, scores_geo, svals_geo, std_d
             x=list(range(1, k_plot + 1)),
             y=(energy[:k_plot] * 100).tolist(),
             labels={"x": "Modes", "y": "Cumul. Energy (%)"},
-            title="POD Energy",
+            title=t("geo_pod_energy"),
         )
         fig_e.add_hline(y=95, line_dash="dash", line_color="orange", annotation_text="95%")
         fig_e.add_hline(y=99, line_dash="dash", line_color="red",    annotation_text="99%")
@@ -246,5 +246,5 @@ def geometry_viewer(n_sliders, mean_geo, modes_geo, scores_geo, svals_geo, std_d
         st.plotly_chart(fig_e, width='stretch', key="geo_energy_plot")
 
 
-n_sliders = st.sidebar.slider("Modes to display", 1, min(20, len(svals_geo)), 10)
+n_sliders = st.sidebar.slider(t("geo_modes_display"), 1, min(20, len(svals_geo)), 10)
 geometry_viewer(n_sliders, mean_geo, modes_geo, scores_geo, svals_geo, std_devs, energy)
