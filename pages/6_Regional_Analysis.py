@@ -34,13 +34,12 @@ from core.data_io import (
     get_anatomical_regions,
     region_slice,
 )
+from core.i18n import t, lang_selector
 
 st.set_page_config(page_title="Regional Analysis", page_icon="🫀", layout="wide")
-st.title("🫀 Regional Analysis — Pressure per Anatomical Region")
-st.caption(
-    "Average static pressure (Pa) in each named section of the airway model, "
-    "from the glottis down to the third-generation bronchial branches."
-)
+lang_selector()
+st.title(t("reg_title"))
+st.caption(t("reg_caption"))
 
 # ── Load static data ───────────────────────────────────────────────────────────
 settings = load_settings()
@@ -48,9 +47,9 @@ doe_df   = load_doe()
 regions  = get_anatomical_regions(settings)
 
 with st.sidebar:
-    st.header("Controls")
-    snap_sel = st.slider("Snapshot", 1, 100, 1)
-    sort_by  = st.radio("Sort bar chart by", ["Mean pressure", "Anatomical order"], index=0)
+    st.header(t("sidebar_controls"))
+    snap_sel = st.slider(t("lbl_snapshot"), 1, 100, 1)
+    sort_by  = st.radio(t("reg_sort_by"), [t("reg_sort_mean"), t("reg_sort_anat")], index=0)
 
 # ── Compute per-region stats for selected snapshot ─────────────────────────────
 @st.cache_data(show_spinner=False)
@@ -89,9 +88,9 @@ def all_regional_means() -> pd.DataFrame:
 
 # ── Tabs ───────────────────────────────────────────────────────────────────────
 tab_snap, tab_cross, tab_export = st.tabs([
-    "📍 Per-Snapshot View",
-    "🗺️ Cross-Snapshot Heatmap",
-    "📥 Export CSV",
+    t("reg_tab_snap"),
+    t("reg_tab_heat"),
+    t("reg_tab_export"),
 ])
 
 # ─ Tab 1: Per-snapshot ─────────────────────────────────────────────────────────
@@ -99,7 +98,7 @@ with tab_snap:
     with st.spinner(f"Computing regional stats for snapshot {snap_sel}…"):
         reg_df = regional_stats(snap_sel)
 
-    if sort_by == "Mean pressure":
+    if sort_by == t("reg_sort_mean"):
         reg_df = reg_df.sort_values("mean_Pa", ascending=False).reset_index(drop=True)
 
     col_chart, col_table = st.columns([3, 2])
@@ -133,7 +132,7 @@ with tab_snap:
         )
 
     # Radial plot — useful for comparing regions on a circular axis
-    st.subheader("Radar Chart")
+    st.subheader(t("reg_sub_radar"))
     top_regions = reg_df.head(12)
     fig_radar = go.Figure(go.Scatterpolar(
         r=top_regions["mean_Pa"].tolist() + [top_regions["mean_Pa"].iloc[0]],
@@ -153,7 +152,7 @@ with tab_snap:
 
 # ─ Tab 2: Cross-snapshot heatmap ───────────────────────────────────────────────
 with tab_cross:
-    st.subheader("All 100 Snapshots × Anatomical Regions")
+    st.subheader(t("reg_sub_heatmap"))
     st.caption(
         "Each cell shows the mean pressure (Pa) for one DOE run in one region. "
         "Rows are snapshots (runs); columns are anatomical regions."
@@ -177,7 +176,7 @@ with tab_cross:
     st.plotly_chart(fig_hm, width='stretch')
 
     # Most-variable regions
-    st.subheader("Most Variable Regions (across 100 runs)")
+    st.subheader(t("reg_sub_variable"))
     variability = heatmap_df.std().sort_values(ascending=False)
     fig_var = px.bar(
         x=variability.index.tolist(),
@@ -193,17 +192,17 @@ with tab_cross:
 
 # ─ Tab 3: Export ───────────────────────────────────────────────────────────────
 with tab_export:
-    st.subheader("Export Regional Statistics")
+    st.subheader(t("reg_sub_export"))
 
-    export_type = st.radio("Export", [
-        "Selected snapshot regional stats",
-        "All snapshots × all regions (wide format)",
+    export_type = st.radio(t("reg_tab_export"), [
+        t("reg_export_sel"),
+        t("reg_export_all"),
     ])
 
-    if export_type == "Selected snapshot regional stats":
+    if export_type == t("reg_export_sel"):
         csv_bytes = regional_stats(snap_sel).to_csv(index=False).encode()
         st.download_button(
-            "Download CSV",
+            t("reg_dl_sel"),
             csv_bytes,
             file_name=f"regional_stats_snapshot{snap_sel}.csv",
             mime="text/csv",
@@ -214,7 +213,7 @@ with tab_export:
         export_df.index.name = "snapshot"
         csv_bytes = export_df.reset_index().to_csv(index=False).encode()
         st.download_button(
-            "Download full heatmap CSV (100 × regions)",
+            t("reg_dl_all"),
             csv_bytes,
             file_name="all_snapshots_regional_means.csv",
             mime="text/csv",

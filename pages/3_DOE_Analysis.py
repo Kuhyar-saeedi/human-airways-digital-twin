@@ -30,13 +30,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core.data_io import load_doe, get_param_cols, PARAM_LABELS
 from core.lhs import latin_hypercube, doe_bounds, discrepancy_score
+from core.i18n import t, lang_selector
 
 st.set_page_config(page_title="DOE Analysis", page_icon="📐", layout="wide")
-st.title("📐 Design of Experiments — Parameter Space Analysis")
-st.caption(
-    "Explore how the 26 geometry parameters are distributed across "
-    "the 100 DOE snapshots and compare with a 1000-point LHS upscaling."
-)
+lang_selector()
+st.title(t("doe_title"))
+st.caption(t("doe_caption"))
 
 # ── Data ───────────────────────────────────────────────────────────────────────
 doe_df     = load_doe()
@@ -45,19 +44,19 @@ labels     = [PARAM_LABELS.get(c, c) for c in param_cols]
 
 # Sidebar: highlight a specific run
 with st.sidebar:
-    st.header("Controls")
-    highlight = st.slider("Highlight run", 1, 100, 1)
+    st.header(t("sidebar_controls"))
+    highlight = st.slider(t("doe_highlight"), 1, 100, 1)
 
 tab1, tab2, tab3, tab4 = st.tabs([
-    "📊 Parallel Coordinates",
-    "🔵 Pairwise Scatter",
-    "🔥 Correlation Heatmap",
-    "🎯 LHS Coverage",
+    t("doe_tab_parallel"),
+    t("doe_tab_scatter"),
+    t("doe_tab_corr"),
+    t("doe_tab_lhs"),
 ])
 
 # ── Tab 1: Parallel coordinates ────────────────────────────────────────────────
 with tab1:
-    st.subheader("All 100 DOE Runs — 26 Parameters")
+    st.subheader(t("doe_sub_parallel"))
     st.caption(
         "Each line is one simulation run. Colour encodes the snapshot number. "
         "Drag the axes to reorder; click an axis range to filter."
@@ -76,7 +75,7 @@ with tab1:
     st.plotly_chart(fig_pc, width='stretch')
 
     # Per-parameter range table
-    st.subheader("Parameter Ranges")
+    st.subheader(t("doe_sub_ranges"))
     range_df = (
         doe_df[param_cols]
         .agg(["min", "max", "mean", "std"])
@@ -93,11 +92,11 @@ with tab1:
 
 # ── Tab 2: Pairwise scatter ────────────────────────────────────────────────────
 with tab2:
-    st.subheader("Pairwise Parameter Scatter")
+    st.subheader(t("doe_sub_pairwise"))
     c1, c2 = st.columns(2)
-    xp = c1.selectbox("X axis", param_cols, index=0,
+    xp = c1.selectbox(t("lbl_x_axis"), param_cols, index=0,
                        format_func=lambda c: PARAM_LABELS.get(c, c))
-    yp = c2.selectbox("Y axis", param_cols, index=3,
+    yp = c2.selectbox(t("lbl_y_axis"), param_cols, index=3,
                        format_func=lambda c: PARAM_LABELS.get(c, c))
 
     fig_sc = px.scatter(
@@ -145,7 +144,7 @@ with tab2:
 
 # ── Tab 3: Correlation heatmap ─────────────────────────────────────────────────
 with tab3:
-    st.subheader("Pearson Correlation Matrix — 26 Parameters")
+    st.subheader(t("doe_sub_corr"))
     st.caption(
         "Values near ±1 indicate strong linear dependence between parameters. "
         "The DOE was designed to minimise correlation, so most values should be ~0."
@@ -171,7 +170,7 @@ with tab3:
 
 # ── Tab 4: LHS coverage ────────────────────────────────────────────────────────
 with tab4:
-    st.subheader("LHS Upscaling: 100 DOE  →  1000 Virtual Shapes")
+    st.subheader(t("doe_sub_lhs"))
     st.markdown("""
     Latin Hypercube Sampling (LHS) generates 1000 new parameter combinations
     within the original bounds. These virtual shapes are evaluated by the RBF
@@ -223,6 +222,6 @@ with tab4:
     d_lhs = discrepancy_score(lhs_samples)
     
     mc1, mc2 = st.columns(2)
-    mc1.metric("DOE L2-discrepancy (100 pts)", f"{d_doe:.5f}",
+    mc1.metric(t("doe_discrepancy"), f"{d_doe:.5f}",
                help="Lower = more uniform coverage")
-    mc2.metric("LHS L2-discrepancy (1000 pts)", f"{d_lhs:.5f}")
+    mc2.metric(t("doe_lhs_discr"), f"{d_lhs:.5f}")

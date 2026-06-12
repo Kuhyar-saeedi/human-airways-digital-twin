@@ -18,13 +18,12 @@ from core.data_io import (
     STRIDE, load_all_pressures, load_ref_coords, load_precomputed_pod,
 )
 from core.pod import compute_pod, cumulative_energy, modes_for_energy, reconstruct
+from core.i18n import t, lang_selector
 
 st.set_page_config(page_title="Animations", page_icon="🎬", layout="wide")
-st.title("🎬 Animated POD Visualisations")
-st.caption(
-    "Animations are built on demand — configure the options then click **Generate**. "
-    "Use the ▶ Play button inside each chart."
-)
+lang_selector()
+st.title(t("anim_title"))
+st.caption(t("anim_caption"))
 
 # ── Load data (lightweight — only precomputed NPZ files) ──────────────────────
 
@@ -32,7 +31,7 @@ _pre_g = load_precomputed_pod("geometry")
 _pre_p = load_precomputed_pod("pressure")
 
 if _pre_g is None or _pre_p is None:
-    st.error("Precomputed POD files not found. Run `scripts/precompute.py --pod-only` first.")
+    st.error(t("anim_error_precomp"))
     st.stop()
 
 mean_geo   = _pre_g["mean"]
@@ -90,27 +89,27 @@ def anim_layout(title: str, n_frames: int, frame_labels: list, height: int = 600
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 tab_geo, tab_reel, tab_pres = st.tabs([
-    "🔬 Geometry Mode Sweep",
-    "🎞️ Pressure Snapshot Reel",
-    "💨 Pressure Mode Sweep",
+    t("anim_tab_geo"),
+    t("anim_tab_reel"),
+    t("anim_tab_pres"),
 ])
 
 
 # ── Tab 1: Geometry mode sweep ────────────────────────────────────────────────
 with tab_geo:
-    st.subheader("Airway Geometry — POD Mode Sweep")
+    st.subheader(t("anim_sub_geo"))
     st.caption("Morphs the airway from −3σ to +3σ along one POD mode.")
 
     c1, c2, c3 = st.columns(3)
-    mode_idx     = c1.slider("POD Mode", 1, min(10, len(svals_geo)), 1, key="g_mode") - 1
-    n_frames_g   = c2.slider("Frames", 10, 25, 16, key="g_frames")
-    sigma_range  = c3.slider("σ range", 1.0, 4.0, 3.0, step=0.5, key="g_sigma")
+    mode_idx     = c1.slider(t("anim_pod_mode"), 1, min(10, len(svals_geo)), 1, key="g_mode") - 1
+    n_frames_g   = c2.slider(t("lbl_frames"), 10, 25, 16, key="g_frames")
+    sigma_range  = c3.slider(t("anim_sigma"), 1.0, 4.0, 3.0, step=0.5, key="g_sigma")
 
     ep = float(svals_geo[mode_idx]**2 / (svals_geo**2).sum() * 100)
     st.info(f"Mode {mode_idx+1} captures **{ep:.1f}%** of geometry variance  |  "
             f"σ = {std_geo[mode_idx]:.4g} m")
 
-    if st.button("Generate Geometry Animation", type="primary", key="gen_geo"):
+    if st.button(t("anim_btn_geo"), type="primary", key="gen_geo"):
         sigma  = float(std_geo[mode_idx])
         alphas = np.linspace(-sigma_range * sigma, sigma_range * sigma, n_frames_g)
 
@@ -150,17 +149,17 @@ with tab_geo:
 
 # ── Tab 2: Pressure snapshot reel ────────────────────────────────────────────
 with tab_reel:
-    st.subheader("Pressure Field — DOE Snapshot Reel")
+    st.subheader(t("anim_sub_reel"))
     st.caption("Steps through all 100 CFD snapshots.")
 
     c1, c2 = st.columns(2)
-    step       = c1.slider("Show every N-th snapshot", 1, 5, 2, key="reel_step")
-    cmap_reel  = c2.selectbox("Colour map", ["Jet","Viridis","Plasma","Turbo"], key="reel_cmap")
+    step       = c1.slider(t("anim_every_n"), 1, 5, 2, key="reel_step")
+    cmap_reel  = c2.selectbox(t("lbl_colour_map"), ["Jet","Viridis","Plasma","Turbo"], key="reel_cmap")
 
     snap_indices = list(range(0, 100, step))
     st.info(f"{len(snap_indices)} frames  ·  ~{len(snap_indices)*42}K points total")
 
-    if st.button("Generate Snapshot Reel", type="primary", key="gen_reel"):
+    if st.button(t("anim_btn_reel"), type="primary", key="gen_reel"):
         with st.spinner("Loading pressure fields…"):
             P_all = load_all_pressures(STRIDE)
 
@@ -209,19 +208,19 @@ with tab_reel:
 
 # ── Tab 3: Pressure mode sweep ────────────────────────────────────────────────
 with tab_pres:
-    st.subheader("Pressure Field — POD Mode Sweep")
+    st.subheader(t("anim_sub_pres"))
     st.caption("Animates the pressure field by sweeping one POD mode from −3σ to +3σ.")
 
     c1, c2, c3 = st.columns(3)
-    pmode_idx    = c1.slider("Pressure Mode", 1, min(10, len(svals_pres)), 1, key="p_mode") - 1
-    n_frames_p   = c2.slider("Frames", 10, 25, 16, key="p_frames")
-    sigma_range_p= c3.slider("σ range", 1.0, 4.0, 3.0, step=0.5, key="p_sigma")
-    cmap_pmode   = st.selectbox("Colour map", ["Jet","Viridis","Plasma","Turbo"], key="p_cmap")
+    pmode_idx    = c1.slider(t("anim_pod_mode"), 1, min(10, len(svals_pres)), 1, key="p_mode") - 1
+    n_frames_p   = c2.slider(t("lbl_frames"), 10, 25, 16, key="p_frames")
+    sigma_range_p= c3.slider(t("anim_sigma"), 1.0, 4.0, 3.0, step=0.5, key="p_sigma")
+    cmap_pmode   = st.selectbox(t("lbl_colour_map"), ["Jet","Viridis","Plasma","Turbo"], key="p_cmap")
 
     ep2 = float(svals_pres[pmode_idx]**2 / (svals_pres**2).sum() * 100)
     st.info(f"Pressure Mode {pmode_idx+1} captures **{ep2:.1f}%** of pressure variance")
 
-    if st.button("Generate Pressure Animation", type="primary", key="gen_pres"):
+    if st.button(t("anim_btn_pres"), type="primary", key="gen_pres"):
         sigma_p = float(std_pres[pmode_idx])
         alphas_p = np.linspace(-sigma_range_p * sigma_p, sigma_range_p * sigma_p, n_frames_p)
 

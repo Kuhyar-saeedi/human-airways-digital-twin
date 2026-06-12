@@ -40,13 +40,12 @@ from core.pod import (
     reconstruction_error,
 )
 from core.data_io import load_precomputed_pod
+from core.i18n import t, lang_selector
 
 st.set_page_config(page_title="POD Analysis", page_icon="📊", layout="wide")
-st.title("📊 POD Analysis — Dimensionality Reduction")
-st.caption(
-    "Singular Value Decomposition (SVD) applied to geometry and pressure snapshots. "
-    "Identify how many modes capture the essential physics."
-)
+lang_selector()
+st.title(t("pod_title"))
+st.caption(t("pod_caption"))
 
 # ── Load data ──────────────────────────────────────────────────────────────────
 doe_df = load_doe()
@@ -87,10 +86,10 @@ e_pres = cumulative_energy(sv_pres)
 
 # ── Tabs ───────────────────────────────────────────────────────────────────────
 tab_e, tab_m, tab_r, tab_v = st.tabs([
-    "⚡ Energy Curves",
-    "🌀 Mode Shapes",
-    "🔄 Reconstruction",
-    "✅ Validation",
+    t("pod_tab_energy"),
+    t("pod_tab_modes"),
+    t("pod_tab_recon"),
+    t("pod_tab_val"),
 ])
 
 # ─ Tab 1: Energy curves ────────────────────────────────────────────────────────
@@ -130,13 +129,12 @@ with tab_e:
     st.plotly_chart(fig_e, width='stretch')
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Geo: modes for 95 %",  modes_for_energy(sv_geo,  0.95))
-    c2.metric("Geo: modes for 99 %",  modes_for_energy(sv_geo,  0.99))
-    c3.metric("Pres: modes for 95 %", modes_for_energy(sv_pres, 0.95))
-    c4.metric("Pres: modes for 99 %", modes_for_energy(sv_pres, 0.99))
+    c1.metric(t("pod_geo_modes95"),  modes_for_energy(sv_geo,  0.95))
+    c2.metric(t("pod_geo_modes99"),  modes_for_energy(sv_geo,  0.99))
+    c3.metric(t("pod_pres_modes95"), modes_for_energy(sv_pres, 0.95))
+    c4.metric(t("pod_pres_modes99"), modes_for_energy(sv_pres, 0.99))
 
-    # Singular values bar chart
-    st.subheader("Singular Value Spectrum")
+    st.subheader(t("pod_sub_sv"))
     sv_df = pd.DataFrame({
         "Mode":     list(range(1, k_plot + 1)) * 2,
         "Value":    list(sv_geo[:k_plot]) + list(sv_pres[:k_plot]),
@@ -158,19 +156,18 @@ with tab_m:
         "indicate the direction of variation."
     )
 
-    field_sel  = st.radio("Field", ["Geometry (displacement magnitude)", "Pressure"], horizontal=True)
-    mode_idx   = st.slider("Mode number", 1, min(20, len(sv_geo)), 1)
+    field_sel  = st.radio(t("pod_mode_field"), [t("pod_geo_label"), t("pod_pres_label")], horizontal=True)
+    mode_idx   = st.slider(t("pod_mode_number"), 1, min(20, len(sv_geo)), 1)
 
-    if field_sel.startswith("Geometry"):
+    if field_sel == t("pod_geo_label"):
         mode_vec = modes_geo[:, mode_idx - 1].reshape(-1, 3)
-        # Use displacement magnitude for colouring
         colour = np.linalg.norm(mode_vec, axis=1)
-        colour_label = "Displacement magnitude"
+        colour_label = t("pod_disp_mag")
         coords_plot = ref_coords
     else:
         mode_vec     = modes_pres[:, mode_idx - 1]
         colour       = mode_vec
-        colour_label = "Pressure mode value"
+        colour_label = t("pod_pres_mode_val")
         coords_plot  = ref_coords
 
     fig_m = go.Figure(go.Scatter3d(
@@ -215,15 +212,15 @@ with tab_r:
     st.subheader("Original vs POD Reconstruction")
 
     col_l, col_r = st.columns(2)
-    snap_r   = col_l.slider("Snapshot to reconstruct", 1, 100, 1, key="rec_snap")
-    k_modes  = col_r.slider("Number of modes used", 1, 40, 10, key="rec_k")
+    snap_r   = col_l.slider(t("pod_snap_recon"), 1, 100, 1, key="rec_snap")
+    k_modes  = col_r.slider(t("pod_modes_used"), 1, 40, 10, key="rec_k")
 
     # Pressure reconstruction
     actual_pres  = P_pres[snap_r - 1]
     rec_pres     = reconstruct(mean_pres, modes_pres[:, :k_modes], scores_pres[snap_r - 1, :k_modes])
     rel_err      = float(np.linalg.norm(actual_pres - rec_pres) / (np.linalg.norm(actual_pres) + 1e-12))
 
-    st.metric(f"Relative L2 error ({k_modes} modes)", f"{rel_err * 100:.3f} %")
+    st.metric(f'{t("pod_rel_err")} ({k_modes} {t("lbl_modes")})', f"{rel_err * 100:.3f} %")
 
     # Side-by-side 3D plots
     c1, c2 = st.columns(2)
@@ -313,10 +310,10 @@ with tab_v:
     )
 
     kf_col1, kf_col2 = st.columns(2)
-    n_folds_pod = kf_col1.slider("Number of folds", 2, 10, 5, key="pod_kfold")
-    k_modes_kf  = kf_col2.slider("POD modes", 1, 30, 10, key="pod_kfold_k")
+    n_folds_pod = kf_col1.slider(t("lbl_n_folds"), 2, 10, 5, key="pod_kfold")
+    k_modes_kf  = kf_col2.slider(t("pod_kfold_modes"), 1, 30, 10, key="pod_kfold_k")
 
-    if st.button("Run K-Fold POD Reconstruction", key="pod_kfold_btn"):
+    if st.button(t("pod_run_kfold"), key="pod_kfold_btn"):
         with st.spinner(f"Running {n_folds_pod}-fold reconstruction validation…"):
             rng = np.random.default_rng(42)
             indices = rng.permutation(100)

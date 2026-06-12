@@ -12,7 +12,7 @@ Generation: Local extractive QA — composes answers from retrieved chunks, no L
 
 Knowledge base
 --------------
-29 documents: topic references + Q&A pairs covering every aspect of the project.
+33 documents: topic references + Q&A pairs covering every aspect of the project.
 Structured so that TF-IDF alone gives useful, direct answers.
 """
 
@@ -101,11 +101,12 @@ Mathematical steps:
 
 Results for this dataset:
 - Geometry POD: 16 modes capture 99% of shape variance
-- Pressure POD: 3 modes capture 99% of pressure variance
+- Pressure POD: ~8 modes capture 99% of pressure variance (typically 5–8 depending on the snapshot set)
 
-The pressure field is so low-dimensional because laminar flow in airways creates smooth,
+The pressure field is relatively low-dimensional because laminar flow in airways creates smooth,
 physically-constrained pressure gradients. Mode 1 captures the dominant axial pressure drop
 (~85% of variance), Mode 2 captures left-right asymmetry, Mode 3 captures curvature effects.
+Modes 4–8 capture the remaining finer spatial variations needed to reach 99%.
 
 Reconstruction formula: field ≈ mean + modes @ coefficients
 """},
@@ -318,9 +319,9 @@ Across the 1000 LHS virtual shapes, the mean ΔP is approximately 1–5 Pa for r
 The surrogate model is validated at multiple levels:
 
 1. POD reconstruction error:
-   - 10 modes: < 1% relative L2 error for pressure reconstruction
-   - 3 modes: captures 99% of pressure variance (energy criterion)
-   - Convergence curve shows error drops rapidly in first 3 modes, then plateaus
+   - 8 modes: < 0.5% relative L2 error for pressure reconstruction (captures 99% of variance)
+   - 10 modes: < 1% relative L2 error (well within engineering accuracy)
+   - Convergence curve shows error drops rapidly in first 3–5 modes, then gradually plateaus
 
 2. RBF LOO cross-validation:
    - Each of 100 snapshots predicted by RBF trained on remaining 99
@@ -345,7 +346,7 @@ The surrogate model is validated at multiple levels:
 "id": "dashboard_pages",
 "title": "Dashboard Pages — What Each Page Does",
 "content": """
-The Streamlit dashboard has 9 pages:
+The Streamlit dashboard has 13 pages:
 
 1. Landing page: project overview, key metrics (100 snapshots, 26 params, 2.1M nodes).
 
@@ -370,7 +371,17 @@ The Streamlit dashboard has 9 pages:
 
 9. Animations: POD mode sweep, snapshot reel, pressure mode sweep. Click Generate first.
 
-10. Ask AI: this page. TF-IDF retrieval over 29 knowledge base documents.
+10. Ask AI: TF-IDF/semantic retrieval over 33 knowledge base documents. Optional Claude API upgrade.
+
+11. Mesh Viewer: airway rendered as a triangulated surface (Mesh3d) with pressure coloured
+    on the solid surface. Compare point cloud vs solid mesh side by side. STL download per snapshot.
+
+12. Delivery Packages: overview and download of three export packages — VR Archive (WebXR),
+    HELYX (STL meshes + parameter tables for CFD), Domino (ML-ready 1000-shape dataset).
+
+13. AI Surrogate (PhysicsNeMo): NVIDIA PhysicsNeMo neural network surrogate trained via
+    knowledge distillation from the RBF model. Shows training journey, live prediction vs CFD
+    ground truth, 1000 virtual shape inference, and HELYX delivery summary.
 """},
 
 {
@@ -427,41 +438,42 @@ Università degli Studi di Roma Tor Vergata.
 
 {
 "id": "qa_pod_modes_pressure",
-"title": "Q: How many POD modes are needed for pressure? Why only 3?",
+"title": "Q: How many POD modes are needed for pressure?",
 "content": """
-Answer: Only 3 POD modes are needed to capture 99% of the pressure variance in this dataset.
+Answer: ~8 POD modes are needed to capture 99% of the pressure variance in this dataset
+(the POD Analysis page shows the exact number via the modes_for_energy metric).
 
-This is physically reasonable because:
+This is physically reasonable: the pressure field is relatively low-dimensional because:
 1. The flow is LAMINAR — smooth, no turbulence, no small-scale pressure fluctuations
-2. The dominant physics is a large-scale pressure gradient from mouth to bronchi (Mode 1, ~85% variance)
+2. Mode 1 captures the dominant axial pressure drop from mouth to bronchi (~85% of variance)
 3. Mode 2 captures left-right pressure asymmetry (different resistance in left vs right lung)
 4. Mode 3 captures the effect of tracheal curvature and branching angle
+5. Modes 4–8 capture progressively finer spatial variations to reach the 99% threshold
 
-The professor's statement that pressure typically needs MORE modes than geometry is generally
-correct for turbulent flows or complex unsteady problems. For laminar airway flow, the
-pressure field is inherently smooth and low-dimensional.
+K-fold cross-validation confirms that relative L2 reconstruction error is < 0.5% with 8 modes.
 
 The 26 DOE parameters may also be partially correlated (LHS ensures uniform marginals but
-not independence), which reduces the effective dimensionality.
+not independence), which reduces the effective dimensionality compared to a fully uncorrelated set.
 """},
 
 {
 "id": "qa_pod_modes_geometry",
-"title": "Q: Why does geometry need 16 modes but pressure only 3?",
+"title": "Q: Why does geometry need 16 modes but pressure only ~8?",
 "content": """
 Answer: Geometry needs 16 modes for 99% energy because 26 independent parameters create
 genuinely high-dimensional shape variation. Each parameter controls a different branch
 independently, so the shape space requires more modes to represent.
 
-Pressure needs only 3 modes because it is physically constrained — the Navier-Stokes
-equations enforce smoothness and the dominant pattern is a single large-scale gradient.
+Pressure needs ~8 modes (compared to 16 for geometry) because it is physically constrained
+— the Navier-Stokes equations enforce smoothness and the dominant pattern is a single
+large-scale pressure gradient. While geometry encodes 26 structural degrees of freedom
+equally, pressure variation is governed by physics that naturally creates smoother,
+lower-dimensional distributions.
 
 Key insight: geometry variation is driven by 26 independent inputs (branching lengths,
-angles, diameters), while pressure variation is governed by physics that naturally creates
-low-dimensional, smooth distributions.
-
-If you see only 3 modes for pressure, check the correlation matrix on the DOE Analysis page.
-If parameters are correlated, the effective dimensionality is lower than 26.
+angles, diameters), while pressure variation is governed by fluid mechanics that amplifies
+only a few dominant spatial patterns. This is why pressure needs roughly half as many modes
+as geometry to achieve the same 99% variance threshold.
 """},
 
 {
@@ -497,8 +509,9 @@ Quantitative validation:
 - K-fold (5-fold) gives consistent per-fold errors, confirming no overfitting
 
 The convergence study shows the optimal number of POD modes for RBF is at the elbow of the
-error curve (typically 3-5 modes for pressure). Using more modes does NOT improve accuracy
-because the additional modes contain noise that the RBF interpolates poorly.
+error curve (typically ~8 modes for pressure, matching the 99% energy criterion). Using
+many more modes does NOT improve accuracy because the highest modes contain noise that the
+RBF interpolates poorly — the error curve flattens or rises beyond the elbow.
 
 The thin_plate_spline kernel (default) works best for this scattered high-dimensional data.
 """},
@@ -679,6 +692,299 @@ The Streamlit web app is better for sharing (public URL, no installation needed)
 The PyQt desktop app is better for interactive exploration and presentations.
 """},
 
+{
+"id": "mesh_viewer",
+"title": "Mesh Viewer (Page 11) — Solid Triangulated Surface",
+"content": """
+The Mesh Viewer (page 11) renders the airway as a solid triangulated surface rather than a point cloud.
+Every other page shows ~42,000 floating dots. The Mesh Viewer connects those dots into triangles
+to produce the kind of continuous 3D object that CFD tools (HELYX, OpenFOAM) and surgical planning
+software actually work with.
+
+How the mesh is built:
+1. Delaunay 3D triangulation fills the point cloud with tetrahedra.
+2. Boundary surface extraction keeps only the faces on the outer surface.
+3. Alpha-shape filtering wraps concave regions tightly.
+   Alpha is estimated automatically: alpha = median nearest-neighbour distance × 6.
+   At stride 50 (~42K nodes), median spacing ~1.4 mm → alpha ~8.4 mm.
+
+Pre-computed STL files (from scripts/export_mesh.py) are loaded instantly if present;
+otherwise the mesh is generated on-the-fly and cached in the session.
+
+Pressure is mapped onto mesh vertices via nearest-neighbour lookup from the point cloud.
+The surface is displayed with Plotly Mesh3d with Phong lighting for realistic rendering.
+
+Tabs:
+- Surface Mesh: full solid render, opacity and colourscale controls, STL download button.
+- Mesh vs Point Cloud: side-by-side comparison of dot cloud vs solid surface.
+- How the mesh is built: explanation of Delaunay + alpha-shape algorithm, quality table.
+
+Resolution vs quality:
+- Stride 50 → ~42K nodes, ~2 s to build — good for teaching and VR.
+- Stride 10 → ~214K nodes, ~8 s — better bronchial detail.
+- Stride 1  → 2.1M nodes, ~120 s — full resolution.
+
+Limitation: the mesh is a surface reconstruction, not the original FEM mesh. Very narrow
+regions (glottis, small bronchi) may be slightly smoothed.
+"""},
+
+{
+"id": "delivery_packages",
+"title": "Delivery Packages (Page 12) — VR Archive, HELYX, Domino",
+"content": """
+The Delivery Packages page (page 12) presents three specialised export packages, each targeting
+a different downstream team or workflow.
+
+VR Archive (export/vr_archive/):
+  A self-contained archive that lets anyone explore airway pressure in 3D — no Python, no server required.
+  Works in any desktop browser (Chrome, Firefox, Edge) and Meta Quest VR headsets via WebXR.
+  Usage: unzip vr_archive.zip, run 'python serve.py', open http://localhost:8765.
+  For Meta Quest: connect to same WiFi, open the Quest browser, navigate to http://YOUR-PC-IP:8765.
+  Controls: left-drag to orbit, scroll to zoom, press F for fly mode (WASD navigation).
+  Generated by: python scripts/export_vr_archive.py
+
+HELYX Package (export/helyx/):
+  STL surface meshes + parameter tables for a CFD engineering team using HELYX (OpenFOAM-based).
+  Contains: 100 actual STL meshes, 31 representative virtual STL meshes, doe_100_actual.csv,
+  lhs_1000_virtual.csv, pod_basis_geometry.npz, HELYX_README.txt.
+  Workflow: import STL → snappyHexMesh → assign BCs (inlet velocity, outlet pressure, no-slip walls)
+  → run simpleFoam or pimpleFoam → compare DeltaP to surrogate predictions.
+  Generated by: python scripts/export_mesh.py then python scripts/export_helyx.py
+
+Domino Dataset (export/domino/):
+  An ML-ready dataset for Domino Data Lab — packages the 1000-shape virtual patient cohort.
+  Contains: shapes_1000_params.csv, shapes_1000_summary.csv (with dp_Pa, resist_index per shape),
+  pod_basis_geometry.npz, pod_basis_pressure.npz, doe_100_actual.csv, dataset_metadata.json.
+  Use cases: regression model for DeltaP from 26 parameters, clustering to find patient archetypes,
+  neural network surrogate training, sensitivity analysis.
+  Generated by: python scripts/export_domino.py
+
+Each package has a ZIP download button on the page.
+"""},
+
+{
+"id": "physicsnemo_surrogate",
+"title": "AI Surrogate — NVIDIA PhysicsNeMo Neural Network (Page 13)",
+"content": """
+The AI Surrogate page (page 13) presents a neural network surrogate trained with NVIDIA PhysicsNeMo
+(the DoMINO architecture) as an alternative to the classical RBF surrogate.
+
+What DoMINO is:
+  DoMINO (Decomposable Multi-scale Iterative Neural Operator) is NVIDIA's pre-trained surrogate
+  for CFD flow field prediction. It learns geometry → flow field mappings from CFD data,
+  then predicts new shapes in milliseconds. Part of the NVIDIA PhysicsNeMo framework.
+
+Our implementation:
+  Input:  k_geo geometry POD mode scores (~16 values)
+  Output: k_pres pressure POD mode scores (~8 values) → full 3D pressure field at 42,719 nodes
+  Architecture: PhysicsNeMo FullyConnected MLP, 3 layers, 32 units, SiLU activation
+  Training data: 80 real CFD snapshots + 1000 RBF pseudo-labels (knowledge distillation)
+  Test RMSE: 3.22 Pa | Relative error: 4.3% | Training time: 12.8 s on RTX 2060
+
+Three-step training journey (shown on page):
+  Step 1 — Naive (80 real snapshots only): severe overfitting, RMSE = 24.67 Pa, 21.8% error.
+    The model had 68,355 parameters but only 80 samples — memorised training data, failed on test.
+  Step 2 — Diagnosis: the 1000 DoMINO export shapes had geometry and pressure scores sampled
+    independently (random, no physical relationship). Useless for supervised training.
+  Step 3 — Fix via knowledge distillation: the validated RBF surrogate generates 1000 physically-
+    correct pseudo-labels (LHS geometry params → RBF → pressure scores). Combined with 80 real
+    snapshots repeated 3× = 1300 training pairs. Result: RMSE drops 7.7× to 3.22 Pa.
+
+Knowledge distillation principle: train the neural network to mimic an accurate classical
+surrogate (teacher). The NN inherits the RBF's accuracy but gains GPU inference speed.
+
+Live Prediction tab: select any of 100 real snapshots, compare NN prediction vs Ansys ground truth side by side.
+1000 Virtual Airways tab: run inference on 1000 LHS shapes, compare NN vs RBF DeltaP distributions.
+HELYX Delivery tab: summary of the HELYX delivery package with boundary condition details.
+
+Requirements: PyTorch + nvidia-physicsnemo (not installed by default, Streamlit page shows install instructions).
+Checkpoint saved at: checkpoints/physicsnemo_surrogate.pt
+"""},
+
+{
+"id": "vr_viewer",
+"title": "3D / VR Viewer (Page 10) — WebXR Three.js Interactive Viewer",
+"content": """
+The 3D / VR Viewer (page 10) is a WebXR-ready interactive point-cloud viewer embedded directly
+in the Streamlit page via st.components.v1.html using Three.js (loaded from CDN).
+
+Features:
+- Full orbit viewer in any desktop browser (left-drag to orbit, scroll to zoom, right-drag to pan).
+- Colour modes: Pressure (Pa), Height (Z), Node index — switchable from the sidebar.
+- Snapshot selector: any of the 100 DOE snapshots.
+- Point size and background colour controls.
+- 'Enter VR' button appears automatically on WebXR-compatible devices (Meta Quest, Chrome+OpenXR).
+  The page must be served over HTTPS or localhost for WebXR to activate.
+
+Standalone HTML download:
+  A downloadable standalone HTML file is provided so the viewer can be opened directly in a
+  VR headset browser without needing Streamlit running. Open the file from a local server or
+  directly in the Meta Quest browser.
+
+Technical implementation:
+  Point cloud data (coordinates + pressure scalars) is serialised to JSON and injected into
+  the Three.js HTML template. Rendering uses THREE.Points with a custom vertex shader that
+  maps the pressure scalar to a Jet colour map. OrbitControls provides mouse/touch interaction.
+  WebXR session is requested via renderer.xr.enabled = true and the VRButton helper.
+
+This page is compatible with Streamlit Community Cloud (no heavy dependencies — pure HTML/JS).
+"""},
+
+
+# ── Italian Q&A documents ─────────────────────────────────────────────────────
+# Bilingual: Italian questions with English-compatible answers for cross-lingual retrieval
+
+{
+    "id": "qa_it_pod",
+    "title": "Cos'è il POD? (What is POD?)",
+    "content": """
+Proper Orthogonal Decomposition (POD), also known as Principal Component Analysis (PCA) or
+Singular Value Decomposition (SVD), is the core dimensionality reduction method in this project.
+
+POD decomposes a set of N snapshots (either geometry coordinates or pressure fields) into:
+  - A mean field (average over all snapshots)
+  - A set of spatial modes (ranked by energy / variance captured)
+  - A set of temporal/parameter-space scores (coefficients for each snapshot)
+
+Italian explanation / Spiegazione in italiano:
+POD è la decomposizione ortogonale propria. Data una matrice X di N istantanee (ad esempio 100
+campi di pressione), SVD la fattorizza come X = U Σ Vᵀ. I vettori colonna di U sono i modi
+spaziali (dove varia la geometria o la pressione), Σ contiene i valori singolari (importanza di
+ciascun modo), e V contiene i coefficienti (punteggi) per ogni istantanea.
+
+Con ~10 modi si cattura il 95% della varianza geometrica, con ~8 modi il 99% della varianza di
+pressione. Questo comprime milioni di gradi di libertà CFD in decine di numeri, rendendo possibile
+il surrogato.
+""",
+},
+
+{
+    "id": "qa_it_rbf",
+    "title": "Come funziona il surrogato RBF? (How does the RBF surrogate work?)",
+    "content": """
+The RBF (Radial Basis Function) surrogate maps 26 geometry parameters to the pressure POD scores.
+
+Italian / Italiano:
+RBF (funzione a base radiale) è il metodo di interpolazione deterministica al cuore del gemello
+digitale. Dati N punti di addestramento (i 100 runs DOE), l'interpolante RBF passa esattamente
+attraverso tutti i punti noti e prevede valori intermedi.
+
+Formula: f(x) = Σᵢ wᵢ φ(‖x − xᵢ‖)
+dove φ è il kernel (thin-plate spline, multiquadric, ecc.) e w sono i pesi determinati risolvendo
+un sistema lineare N×N.
+
+Nucleo thin-plate spline: φ(r) = r² log(r) — buono per dati ad alta dimensione.
+Il kernel RBF qui e il "kernel RBF" di sklearn sono cose diverse: qui φ è la funzione di
+interpolazione, in sklearn "RBF" è il kernel squared-exponential exp(−r²/2ℓ²) usato nei
+processi gaussiani.
+
+Velocità: <1 ms per query dopo l'addestramento. Accuratezza: errore LOO medio ~0.01–0.05 nello
+spazio dei punteggi POD (dipende dal numero di modi e dal kernel scelto).
+""",
+},
+
+{
+    "id": "qa_it_digital_twin",
+    "title": "Cos'è un Gemello Digitale? (What is a Digital Twin?)",
+    "content": """
+A Digital Twin is a virtual replica of a physical system that is continuously updated with real
+data and can predict the system's behaviour in real time.
+
+Italian / Italiano:
+Un Gemello Digitale è una replica virtuale di un sistema fisico. Nel contesto di questo progetto:
+  - Il "gemello" è il modello surrogato (RBF/GP) addestrato sui 100 runs CFD
+  - Il "fisico" è la geometria reale delle vie aeree di un paziente
+  - L'"aggiornamento" avviene quando vengono misurati nuovi parametri anatomici (es. post-operatori)
+
+Flusso di lavoro clinico:
+1. TC del paziente → estrazione di 26 parametri anatomici
+2. I 26 numeri entrano nel surrogato RBF
+3. In < 1 ms si ottiene il campo di pressione 3D completo
+4. Il clinico legge ΔP (resistenza) e individua le zone di strozzatura
+
+Rispetto alla simulazione CFD tradizionale (ore), il gemello digitale risponde in millisecondi,
+abilitando valutazioni pre-operatorie e pianificazione di interventi in tempo reale.
+""",
+},
+
+{
+    "id": "qa_it_resistenza",
+    "title": "Cos'è la resistenza delle vie aeree? (What is airway resistance?)",
+    "content": """
+Airway resistance is quantified as ΔP = max(pressure) − min(pressure) across the airway.
+Higher ΔP means more resistance to airflow — the patient has to work harder to breathe.
+
+Italian / Italiano:
+La resistenza delle vie aeree è la differenza di pressione ΔP tra l'ingresso e l'uscita
+del sistema respiratorio. Maggiore ΔP = più sforzo per respirare.
+
+Nel gemello digitale calcoliamo: ΔP = P_max − P_min su tutti i nodi della maglia.
+L'indice di resistenza è ΔP / ΔP_riferimento × 100%, dove ΔP_riferimento è calcolato
+sulla geometria media (100 runs DOE).
+
+Valori tipici nei 100 runs DOE: ΔP varia tra ~X e ~Y Pa a seconda della geometria.
+Condizioni patologiche (stenosi tracheale, laringomalacia) producono ΔP molto elevati.
+Il parametro più correlato con ΔP è tipicamente il diametro della trachea (d_trachea) e
+l'area della glottide (A_glotis).
+""",
+},
+
+{
+    "id": "qa_it_sobol",
+    "title": "Cosa sono gli indici di Sobol? (What are Sobol indices?)",
+    "content": """
+Sobol indices are variance-based global sensitivity measures. Unlike Pearson correlation
+(which only captures linear effects), Sobol indices measure the total contribution of each
+input parameter to the output variance, including non-linear and interaction effects.
+
+Italian / Italiano:
+Gli indici di Sobol misurano quanto della varianza dell'output (es. ΔP) è spiegato da ciascun
+parametro geometrico.
+
+  S₁ (primo ordine): varianza spiegata dal parametro da solo
+  Sₜ (totale): varianza incluse tutte le interazioni con altri parametri
+  Sₜ − S₁: contributo delle interazioni
+
+Stimatore Saltelli (2010): richiede N×(d+2) valutazioni del surrogato (N=512, d=26 → ~14.336
+valutazioni, ognuna < 1 ms → ~14 s totali).
+
+Pearson r cattura solo relazioni lineari; Sobol S₁ >> |Pearson r| indica un effetto non-lineare
+forte. Pearson r ≈ Sobol S₁ indica una relazione principalmente lineare.
+
+Risultato tipico: A_glotis e d_trachea dominano sia S₁ che Sₜ per la pressione media;
+gli angoli di ramificazione bronchiale hanno Sₜ elevato ma S₁ basso (principalmente interazioni).
+""",
+},
+
+{
+    "id": "qa_it_processo_gaussiano",
+    "title": "Cos'è un Processo Gaussiano (GP)? (What is a Gaussian Process?)",
+    "content": """
+A Gaussian Process (GP) is a probabilistic surrogate model that provides not only predictions
+but also uncertainty estimates (posterior standard deviation).
+
+Italian / Italiano:
+Un Processo Gaussiano (GP) è un modello surrogato probabilistico: oltre alla predizione
+fornisce una stima dell'incertezza (deviazione standard posteriore).
+
+Kernel comuni disponibili in questo progetto:
+  - matern_52: C(1,0) × Matérn(ν=2.5) — buon default per dati fisici, differenziabile due volte
+  - matern_32: C(1,0) × Matérn(ν=1.5) — caratteristiche più nette
+  - rbf: C(1,0) × RBF(ℓ) — squared-exponential, liscio all'infinito
+  - rational_quadratic: miscela di lunghezze di scala
+
+Differenza rispetto a RBF (interpolazione):
+  - RBF interpola esattamente i punti di addestramento (deterministico)
+  - GP regredisce sui punti (probabilistico), ottimizza iperparametri via massima verosimiglianza
+
+Attenzione alla collisione di nomi: il "kernel RBF" di sklearn (exp(−r²/2ℓ²)) e la funzione RBF
+di scipy (interpolazione) sono matematicamente diverse, anche se il nome è simile.
+
+In questo progetto: GP è più lento da addestrare (O(n³) con ottimizzazione iperparametri),
+ma fornisce stime di incertezza utili per rilevare estrapolazioni fuori dal dominio di addestramento.
+""",
+},
+
 ]  # end of _DOCS
 
 
@@ -813,12 +1119,15 @@ def compose_local_answer(query: str, results: List[Tuple[float, dict]],
 # ── Claude API generation (optional upgrade) ─────────────────────────────────
 
 def _get_api_key() -> "str | None":
-    key = os.environ.get("ANTHROPIC_API_KEY")
+    def _valid(k: "str | None") -> "str | None":
+        return k if (k and k.startswith("sk-ant-") and len(k) > 20) else None
+
+    key = _valid(os.environ.get("ANTHROPIC_API_KEY"))
     if key:
         return key
     try:
         import streamlit as st
-        return st.secrets.get("ANTHROPIC_API_KEY")
+        return _valid(st.secrets.get("ANTHROPIC_API_KEY"))
     except Exception:
         return None
 
@@ -837,12 +1146,17 @@ def generate_answer(query: str, context_chunks: List[str]) -> "str | None":
         "at Università degli Studi di Roma Tor Vergata. Answer concisely and technically."
     )
     prompt = f"Context:\n\n{context}\n\nQuestion: {query}"
-    client = anthropic.Anthropic(api_key=api_key)
-    msg    = client.messages.create(
-        model="claude-haiku-4-5-20251001", max_tokens=512,
-        system=system, messages=[{"role": "user", "content": prompt}],
-    )
-    return msg.content[0].text
+    try:
+        client = anthropic.Anthropic(api_key=api_key)
+        msg    = client.messages.create(
+            model="claude-haiku-4-5-20251001", max_tokens=512,
+            system=system, messages=[{"role": "user", "content": prompt}],
+        )
+        return msg.content[0].text
+    except anthropic.AuthenticationError:
+        return None
+    except Exception:
+        return None
 
 
 # ── Singleton ─────────────────────────────────────────────────────────────────

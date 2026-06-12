@@ -13,7 +13,7 @@ import numpy as np
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
     QMainWindow, QTabWidget, QWidget, QVBoxLayout,
-    QLabel, QProgressBar, QApplication,
+    QLabel, QProgressBar, QApplication, QSizePolicy,
 )
 from PyQt5.QtGui import QPalette, QColor
 
@@ -152,43 +152,84 @@ class MainWindow(QMainWindow):
                 self.all_pressures
             )
 
+        self._log("Loading settings…", 88)
+        from core.data_io import load_settings
+        self.settings = load_settings()
+
         self._log("Data ready!", 100)
         QApplication.processEvents()
 
     # ── Tab building ─────────────────────────────────────────────────────────
 
     def _build_tabs(self):
-        from qt_app.geometry_tab import GeometryTab
-        from qt_app.pressure_tab import PressureTab
-        from qt_app.rbf_tab     import RBFTab
+        from qt_app.geometry_tab      import GeometryTab
+        from qt_app.pressure_tab      import PressureTab
+        from qt_app.rbf_tab           import RBFTab
+        from qt_app.doe_tab           import DOETab
+        from qt_app.pod_tab           import PODTab
+        from qt_app.regional_tab      import RegionalTab
+        from qt_app.design_space_tab  import DesignSpaceTab
+        from qt_app.assistant_tab     import AssistantTab
 
         tabs = QTabWidget()
         tabs.setStyleSheet("""
             QTabWidget::pane   { border: 1px solid #2a2a2a; }
             QTabBar::tab       { background: #1a1d26; color: #aaa;
-                                 padding: 8px 20px; border: 1px solid #2a2a2a;
-                                 border-bottom: none; }
+                                 padding: 8px 16px; border: 1px solid #2a2a2a;
+                                 border-bottom: none; font-size: 11px; }
             QTabBar::tab:selected { background: #252836; color: #4EB3D3;
                                     border-top: 2px solid #4EB3D3; }
             QTabBar::tab:hover    { background: #252836; color: #fff; }
         """)
+        tabs.setTabPosition(QTabWidget.North)
+        tabs.setUsesScrollButtons(True)
 
+        # ── Original 3 tabs ──────────────────────────────────────────────────
         geo_tab = GeometryTab(
             self.mean_geo, self.modes_geo, self.scores_geo, self.svals_geo
         )
-        tabs.addTab(geo_tab, "🔬 Geometry Explorer")
+        tabs.addTab(geo_tab, "🔬 Geometry")
 
         pres_tab = PressureTab(
             self.ref_coords, self.mean_pres, self.modes_pres,
             self.scores_pres, self.all_pressures, self.doe_df
         )
-        tabs.addTab(pres_tab, "🌡️ Pressure Field")
+        tabs.addTab(pres_tab, "🌡️ Pressure")
 
         rbf_tab = RBFTab(
             self.ref_coords, self.mean_pres, self.modes_pres,
             self.scores_pres, self.svals_pres,
             self.doe_df, self.param_cols
         )
-        tabs.addTab(rbf_tab, "🔮 RBF Inference")
+        tabs.addTab(rbf_tab, "🔮 RBF")
+
+        # ── New analytics tabs ───────────────────────────────────────────────
+        self._log("Building DOE Analysis tab…", 92)
+        doe_tab = DOETab(self.doe_df, self.param_cols)
+        tabs.addTab(doe_tab, "📐 DOE")
+
+        self._log("Building POD Analysis tab…", 94)
+        pod_tab = PODTab(
+            self.mean_geo, self.modes_geo, self.svals_geo,
+            self.mean_pres, self.modes_pres, self.scores_pres, self.svals_pres,
+            self.ref_coords, self.all_pressures
+        )
+        tabs.addTab(pod_tab, "📊 POD")
+
+        self._log("Building Regional Analysis tab…", 96)
+        regional_tab = RegionalTab(self.settings)
+        tabs.addTab(regional_tab, "🫀 Regional")
+
+        self._log("Building Design Space tab…", 97)
+        design_tab = DesignSpaceTab(
+            self.doe_df, self.param_cols,
+            self.mean_pres, self.modes_pres, self.scores_pres, self.svals_pres,
+            self.scores_geo, self.all_pressures
+        )
+        tabs.addTab(design_tab, "🗺️ Design Space")
+
+        self._log("Building AI Assistant tab…", 99)
+        assistant_tab = AssistantTab()
+        tabs.addTab(assistant_tab, "🤖 AI Assistant")
 
         self.setCentralWidget(tabs)

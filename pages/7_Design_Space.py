@@ -29,10 +29,12 @@ from core.data_io import (
 from core.pod import compute_pod, modes_for_energy
 from core.rbf import build_rbf, predict
 from core.lhs import latin_hypercube
+from core.i18n import t, lang_selector
 
 st.set_page_config(page_title="Design Space", page_icon="🗺️", layout="wide")
-st.title("🗺️ Design Space — What Drives Airway Pressure?")
-st.caption("Explore which geometric parameters matter most and how the design space is structured.")
+lang_selector()
+st.title(t("ds_title"))
+st.caption(t("ds_caption"))
 
 # ── Load data ─────────────────────────────────────────────────────────────────
 doe_df     = load_doe()
@@ -47,6 +49,8 @@ mean_pressure_per_run = P_all.mean(axis=1)   # (100,) mean pressure per snapshot
 # POD for pressure (precomputed or computed)
 _pre = load_precomputed_pod("pressure")
 if _pre is not None:
+    mean_pres   = _pre["mean"]
+    modes_pres  = _pre["modes"]
     scores_pres = _pre["scores"]
     sv_pres     = _pre["svalues"]
 else:
@@ -54,7 +58,7 @@ else:
     def _pres_pod(P):
         return compute_pod(P)
     with st.spinner("Computing pressure POD…"):
-        _, _, scores_pres, sv_pres = _pres_pod(P_all)
+        mean_pres, modes_pres, scores_pres, sv_pres = _pres_pod(P_all)
 
 # POD for geometry (precomputed or computed)
 _pre_g = load_precomputed_pod("geometry")
@@ -70,15 +74,15 @@ else:
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 tab_sens, tab_land, tab_matrix, tab_sobol = st.tabs([
-    "📊 Parameter Sensitivity",
-    "🌐 Design Landscape",
-    "🔢 Param–Pressure Grid",
-    "🎲 Sobol Indices",
+    t("ds_tab_sens"),
+    t("ds_tab_land"),
+    t("ds_tab_grid"),
+    t("ds_tab_sobol"),
 ])
 
 # ── Tab 1: Parameter Sensitivity ──────────────────────────────────────────────
 with tab_sens:
-    st.subheader("Which parameter drives mean airway pressure the most?")
+    st.subheader(t("ds_sub_sensitivity"))
     st.markdown(
         "Pearson correlation coefficient between each of the 26 geometry parameters "
         "and the **mean static pressure** across the 100 DOE snapshots.  "
@@ -190,7 +194,7 @@ with tab_land:
     st.plotly_chart(fig_land, width='stretch')
 
     # Same for geometry space
-    st.subheader("Geometry POD space")
+    st.subheader(t("ds_sub_landscape"))
     fig_geo_land = go.Figure(go.Scatter(
         x=scores_geo[:, 0], y=scores_geo[:, 1],
         mode="markers",
@@ -292,7 +296,7 @@ with tab_matrix:
 
 # ── Tab 4: Sobol Sensitivity Indices ─────────────────────────────────────────
 with tab_sobol:
-    st.subheader("Variance-Based Global Sensitivity — Sobol Indices")
+    st.subheader(t("ds_sub_sobol"))
     st.markdown("""
     Sobol indices measure **how much of the output variance** is explained by each input parameter.
     Unlike Pearson correlation (linear only), Sobol captures **non-linear and interaction effects**.
@@ -306,12 +310,12 @@ with tab_sobol:
 
     col1, col2 = st.columns(2)
     N_sobol = col1.select_slider(
-        "Sample size N (higher = more accurate, slower)",
+        t("ds_sample_n"),
         options=[128, 256, 512, 1024], value=512, key="sobol_N"
     )
     sobol_output = col2.radio(
-        "Output variable",
-        ["Mean pressure", "ΔP (airway resistance)"],
+        t("ds_output_var"),
+        [t("ds_mean_pres"), t("ds_delta_p")],
         key="sobol_out", horizontal=True,
     )
 
@@ -321,7 +325,7 @@ with tab_sobol:
         f"Each takes <1 ms — total ~{N_sobol*(len(param_cols)+2)/1000:.1f}s."
     )
 
-    if st.button("Compute Sobol Indices", type="primary", key="run_sobol"):
+    if st.button(t("ds_btn_sobol"), type="primary", key="run_sobol"):
 
         # ── Build RBF surrogate ──────────────────────────────────────────────
         params_norm_s = (params_raw - params_raw.min(axis=0)) / (
@@ -350,7 +354,7 @@ with tab_sobol:
                 ).mean()
                 # Simpler: just use predicted mean pressure
                 pred_field = mean_pres + modes_pres[:, :k_s] @ sc[i]
-                if sobol_output == "Mean pressure":
+                if sobol_output == t("ds_mean_pres"):
                     results[i] = float(pred_field.mean())
                 else:
                     results[i] = float(pred_field.max() - pred_field.min())
@@ -400,7 +404,7 @@ with tab_sobol:
         }).sort_values("ST (total)", ascending=False)
 
         # ── Grouped bar chart ────────────────────────────────────────────────
-        top_n = st.slider("Show top N parameters", 5, len(param_cols), 15, key="sobol_topn")
+        top_n = st.slider(t("ds_top_n"), 5, len(param_cols), 15, key="sobol_topn")
         plot_df = sobol_df.head(top_n)
 
         fig_sobol = go.Figure()

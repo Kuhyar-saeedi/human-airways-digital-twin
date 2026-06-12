@@ -33,15 +33,16 @@ from core.data_io import (
     get_param_cols,
     PARAM_LABELS,
 )
+from core.i18n import t, lang_selector
 
 st.set_page_config(
     page_title="Pressure Field",
     page_icon="🌡️",
     layout="wide",
 )
-
-st.title("🌡️ 3D Pressure Field Viewer")
-st.caption("Static pressure (Pa) on the human airway mesh for each DOE simulation run.")
+lang_selector()
+st.title(t("pres_title"))
+st.caption(t("pres_caption"))
 
 # ── Static data ────────────────────────────────────────────────────────────────
 doe_df   = load_doe()
@@ -52,29 +53,29 @@ param_cols = get_param_cols(doe_df)
 
 # ── Sidebar controls ───────────────────────────────────────────────────────────
 with st.sidebar:
-    st.header("Visualisation Controls")
+    st.header(t("sidebar_vis"))
 
-    snap = st.slider("DOE Run (Snapshot)", 1, 100, 1)
+    snap = st.slider(t("lbl_snapshot"), 1, 100, 1)
 
     st.divider()
     use_deformed = st.toggle(
-        "Deformed geometry",
+        t("pres_deformed"),
         value=False,
         help="Load run-specific mesh coordinates (~50 MB). Slower on first load.",
     )
-    region_sel = st.selectbox("Region filter", ["All"] + regions)
+    region_sel = st.selectbox(t("lbl_region"), ["All"] + regions)
     cmap = st.selectbox(
-        "Colour map",
+        t("lbl_colour_map"),
         ["Jet", "Viridis", "Plasma", "RdBu_r", "Turbo", "Hot"],
         index=0,
     )
-    opacity = st.slider("Point opacity", 0.1, 1.0, 0.65, step=0.05)
-    pt_size = st.slider("Point size", 1, 5, 2)
+    opacity = st.slider(t("lbl_opacity"), 0.1, 1.0, 0.65, step=0.05)
+    pt_size = st.slider(t("lbl_point_size"), 1, 5, 2)
 
     st.divider()
     # Show DOE parameters for selected run
     row = doe_df[doe_df["snapshot_num"] == snap].iloc[0]
-    st.subheader(f"Run {snap} — Parameters")
+    st.subheader(f"Run {snap} — {t('pres_params_hdr')}")
     for col in ["A_glotis", "A_epiglotis", "d_trachea", "l_trachea", "r_curvature",
                 "teta_branch_trachea", "l_l", "l_r"]:
         st.metric(PARAM_LABELS.get(col, col), f"{row[col]:.2f}")
@@ -95,11 +96,11 @@ else:
 
 # ── Summary metrics ────────────────────────────────────────────────────────────
 m1, m2, m3, m4, m5 = st.columns(5)
-m1.metric("Min pressure",  f"{pressure_v.min():.1f} Pa")
-m2.metric("Max pressure",  f"{pressure_v.max():.1f} Pa")
-m3.metric("Mean pressure", f"{pressure_v.mean():.1f} Pa")
-m4.metric("Std deviation", f"{pressure_v.std():.1f} Pa")
-m5.metric("Nodes shown",   f"{len(coords_v):,}")
+m1.metric(t("met_min_pres"),  f"{pressure_v.min():.1f} Pa")
+m2.metric(t("met_max_pres"),  f"{pressure_v.max():.1f} Pa")
+m3.metric(t("met_mean_pres"), f"{pressure_v.mean():.1f} Pa")
+m4.metric(t("met_std_pres"),  f"{pressure_v.std():.1f} Pa")
+m5.metric(t("met_nodes"),     f"{len(coords_v):,}")
 
 # ── 3D scatter coloured by pressure ───────────────────────────────────────────
 fig = go.Figure(
